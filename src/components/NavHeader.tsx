@@ -6,6 +6,7 @@ import { useCurrentUser } from '@/components/AuthGuard';
 
 const navItems = [
   { href: '/dashboard', label: 'Upload' },
+  { href: '/dashboard/shifts', label: 'Shift Parser' },
   { href: '/dashboard/history', label: 'Audit Log' },
   { href: '/dashboard/admin', label: 'Admin' },
 ];
