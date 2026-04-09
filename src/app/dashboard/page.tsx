@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
+import NavHeader from '@/components/NavHeader';
 import FileUploader from '@/components/FileUploader';
 import DataPreview from '@/components/DataPreview';
 import SubmitProgress, { RowStatus } from '@/components/SubmitProgress';
@@ -16,7 +16,6 @@ import {
 type Tab = 'create' | 'update' | 'shift_update';
 
 function DashboardContent() {
-  const router = useRouter();
   const user = useCurrentUser();
   const [activeTab, setActiveTab] = useState<Tab>('create');
   const [parseResults, setParseResults] = useState<ParseResult | null>(null);
@@ -213,12 +212,6 @@ function DashboardContent() {
     URL.revokeObjectURL(url);
   };
 
-  const handleSignOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.replace('/login');
-  };
-
   const validCount = validationResults.filter((r, idx) => r.valid && !duplicateADs.has(idx)).length;
 
   const tabs: { key: Tab; label: string }[] = [
@@ -229,27 +222,7 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold text-slate-900">UM Bulk Updater</h1>
-          <button
-            onClick={() => router.push('/dashboard/history')}
-            className="text-sm text-slate-500 hover:text-slate-700 transition-colors"
-          >
-            History
-          </button>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-slate-500">{user?.email}</span>
-          <button
-            onClick={handleSignOut}
-            className="text-sm text-slate-500 hover:text-red-600 transition-colors"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
+      <NavHeader />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         {/* Tabs */}

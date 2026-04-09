@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import AuthGuard from '@/components/AuthGuard';
+import NavHeader from '@/components/NavHeader';
 import { createClient } from '@/lib/supabase';
 
 interface Batch {
@@ -30,7 +30,6 @@ interface BatchRecord {
 }
 
 function HistoryContent() {
-  const router = useRouter();
   const [batches, setBatches] = useState<Batch[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
   const [records, setRecords] = useState<BatchRecord[]>([]);
@@ -96,18 +95,7 @@ function HistoryContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold text-slate-900">UM Bulk Updater</h1>
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="text-sm text-slate-500 hover:text-slate-700 transition-colors"
-          >
-            Dashboard
-          </button>
-          <span className="text-sm text-blue-600 font-medium">History</span>
-        </div>
-      </header>
+      <NavHeader />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         {/* Batch List */}
