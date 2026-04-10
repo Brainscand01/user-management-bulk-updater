@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
-import AuthGuard from '@/components/AuthGuard';
+import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import FileUploader from '@/components/FileUploader';
 import { extractSheetData, identifyScheduleSheets, SheetData } from '@/lib/shift-extractor';
@@ -31,11 +31,17 @@ interface ParseResponse {
   totalAgents: number;
   sheetsProcessed: number;
   sheetsSkipped: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  };
 }
 
 type FilterMode = 'all' | 'working' | 'off' | 'low-confidence' | 'no-ad';
 
 function ShiftsContent() {
+  const user = useCurrentUser();
   const [fileName, setFileName] = useState('');
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [scheduleSheets, setScheduleSheets] = useState<SheetData[]>([]);
@@ -101,7 +107,7 @@ function ShiftsContent() {
       const res = await fetch('/api/shifts/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName, sheets: sheetsToSend }),
+        body: JSON.stringify({ fileName, sheets: sheetsToSend, userEmail: user?.email }),
       });
 
       const data = await res.json();
@@ -376,6 +382,16 @@ function ShiftsContent() {
                   Low/Med Confidence
                 </div>
               </div>
+              {parseResult?.usage && (
+                <div className="bg-purple-50 rounded-lg p-3">
+                  <div className="text-2xl font-bold text-purple-700">
+                    ${parseResult.usage.costUsd.toFixed(4)}
+                  </div>
+                  <div className="text-xs text-purple-600">
+                    Parse Cost ({parseResult.usage.inputTokens.toLocaleString()}↓ {parseResult.usage.outputTokens.toLocaleString()}↑)
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Sheet breakdown */}

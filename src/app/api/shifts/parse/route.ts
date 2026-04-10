@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { createClient } from '@supabase/supabase-js';
+
+const HAIKU_INPUT_COST_PER_M = 1.0;   // $1.00 per 1M input tokens
+const HAIKU_OUTPUT_COST_PER_M = 5.0;  // $5.00 per 1M output tokens
+
+function calculateCost(inputTokens: number, outputTokens: number): number {
+  return (inputTokens / 1_000_000) * HAIKU_INPUT_COST_PER_M +
+         (outputTokens / 1_000_000) * HAIKU_OUTPUT_COST_PER_M;
+}
 
 interface SheetPayload {
   sheetName: string;
@@ -96,11 +105,17 @@ ${grid}
 Extract all agent shift assignments from this sheet. Return JSON matching the schema. Focus on working shifts only if there are many agents.`;
 }
 
+interface ApiCallResult {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 async function callWithRetry(
   client: Anthropic,
   prompt: string,
   maxRetries = 3,
-): Promise<string> {
+): Promise<ApiCallResult> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await client.messages.create({
@@ -116,7 +131,11 @@ async function callWithRetry(
         throw new Error('No text in response');
       }
 
-      return textBlock.text;
+      return {
+        text: textBlock.text,
+        inputTokens: response.usage?.input_tokens || 0,
+        outputTokens: response.usage?.output_tokens || 0,
+      };
     } catch (err) {
       const isRateLimit = err instanceof Anthropic.RateLimitError ||
         (err instanceof Error && err.message.includes('429'));
@@ -174,25 +193,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { fileName, sheets } = await request.json() as {
+    const { fileName, sheets, userEmail } = await request.json() as {
       fileName: string;
       sheets: SheetPayload[];
+      userEmail?: string;
     };
 
     if (!sheets || sheets.length === 0) {
       return NextResponse.json({ error: 'No sheet data provided' }, { status: 400 });
     }
 
+    // Supabase client for usage logging
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const supabase = supabaseUrl && supabaseKey
+      ? createClient(supabaseUrl, supabaseKey)
+      : null;
+
     const client = new Anthropic({ apiKey });
     const results: SheetResult[] = [];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
 
     for (let i = 0; i < sheets.length; i++) {
       const sheet = sheets[i];
 
       try {
         const userPrompt = buildSheetPrompt(sheet, fileName);
-        const responseText = await callWithRetry(client, userPrompt);
-        const parsed = parseJsonResponse(responseText);
+        const apiResult = await callWithRetry(client, userPrompt);
+        const parsed = parseJsonResponse(apiResult.text);
+
+        // Track tokens
+        totalInputTokens += apiResult.inputTokens;
+        totalOutputTokens += apiResult.outputTokens;
+
+        // Log usage to Supabase
+        if (supabase) {
+          const cost = calculateCost(apiResult.inputTokens, apiResult.outputTokens);
+          await supabase.from('api_usage').insert({
+            file_name: fileName,
+            sheet_name: sheet.sheetName,
+            input_tokens: apiResult.inputTokens,
+            output_tokens: apiResult.outputTokens,
+            cost_usd: cost,
+            model: 'claude-haiku-4-5',
+            user_email: userEmail || null,
+          }).then(() => {}); // fire and forget
+        }
 
         // Normalize and validate entries
         const validEntries = (parsed.entries || [])
@@ -230,6 +277,7 @@ export async function POST(request: NextRequest) {
     }
 
     const allEntries = results.flatMap(r => r.entries);
+    const totalCost = calculateCost(totalInputTokens, totalOutputTokens);
 
     return NextResponse.json({
       results,
@@ -237,6 +285,11 @@ export async function POST(request: NextRequest) {
       totalAgents: new Set(allEntries.map(e => e.ad || e.agentName)).size,
       sheetsProcessed: results.length,
       sheetsSkipped: results.filter(r => r.skippedReason).length,
+      usage: {
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        costUsd: totalCost,
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

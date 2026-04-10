@@ -12,6 +12,30 @@ interface AppUser {
   email_confirmed_at: string | null;
 }
 
+interface UsageTotals {
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  calls: number;
+}
+
+interface RecentFile {
+  fileName: string;
+  cost: number;
+  sheets: number;
+  lastUsed: string;
+  user: string;
+}
+
+interface UsageData {
+  totals: {
+    allTime: UsageTotals;
+    thisMonth: UsageTotals;
+    today: UsageTotals;
+  };
+  recentFiles: RecentFile[];
+}
+
 function AdminContent() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -24,9 +48,28 @@ function AdminContent() {
   const [addError, setAddError] = useState('');
   const [addSuccess, setAddSuccess] = useState('');
 
+  // Usage data
+  const [usage, setUsage] = useState<UsageData | null>(null);
+  const [usageLoading, setUsageLoading] = useState(true);
+
   useEffect(() => {
     loadUsers();
+    loadUsage();
   }, []);
+
+  async function loadUsage() {
+    setUsageLoading(true);
+    try {
+      const res = await fetch('/api/admin/usage');
+      const data = await res.json();
+      if (!data.error) {
+        setUsage(data as UsageData);
+      }
+    } catch {
+      // silently fail - usage is non-critical
+    }
+    setUsageLoading(false);
+  }
 
   async function loadUsers() {
     setLoading(true);
@@ -151,6 +194,89 @@ function AdminContent() {
           )}
           {addSuccess && (
             <div className="mt-3 text-sm text-green-600 bg-green-50 p-2 rounded">{addSuccess}</div>
+          )}
+        </div>
+
+        {/* AI API Usage Monitor */}
+        <div className="bg-white rounded-lg border border-slate-200 p-6">
+          <h2 className="text-sm font-medium text-slate-700 mb-4">AI API Usage (Claude Haiku 4.5)</h2>
+
+          {usageLoading ? (
+            <div className="text-sm text-slate-500">Loading usage data...</div>
+          ) : usage ? (
+            <>
+              {/* Cost cards */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-purple-50 rounded-lg p-4">
+                  <div className="text-xs font-medium text-purple-600 mb-1">Today</div>
+                  <div className="text-2xl font-bold text-purple-700">${usage.totals.today.cost.toFixed(4)}</div>
+                  <div className="text-xs text-purple-500 mt-1">
+                    {usage.totals.today.calls} calls &middot; {(usage.totals.today.inputTokens + usage.totals.today.outputTokens).toLocaleString()} tokens
+                  </div>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-4">
+                  <div className="text-xs font-medium text-blue-600 mb-1">This Month</div>
+                  <div className="text-2xl font-bold text-blue-700">${usage.totals.thisMonth.cost.toFixed(4)}</div>
+                  <div className="text-xs text-blue-500 mt-1">
+                    {usage.totals.thisMonth.calls} calls &middot; {(usage.totals.thisMonth.inputTokens + usage.totals.thisMonth.outputTokens).toLocaleString()} tokens
+                  </div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <div className="text-xs font-medium text-slate-600 mb-1">All Time</div>
+                  <div className="text-2xl font-bold text-slate-900">${usage.totals.allTime.cost.toFixed(4)}</div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {usage.totals.allTime.calls} calls &middot; {(usage.totals.allTime.inputTokens + usage.totals.allTime.outputTokens).toLocaleString()} tokens
+                  </div>
+                </div>
+              </div>
+
+              {/* Token breakdown */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs font-medium text-slate-600">Input Tokens (All Time)</div>
+                  <div className="text-lg font-semibold text-slate-800">{usage.totals.allTime.inputTokens.toLocaleString()}</div>
+                  <div className="text-xs text-slate-400">@ $1.00/M = ${(usage.totals.allTime.inputTokens / 1_000_000).toFixed(4)}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs font-medium text-slate-600">Output Tokens (All Time)</div>
+                  <div className="text-lg font-semibold text-slate-800">{usage.totals.allTime.outputTokens.toLocaleString()}</div>
+                  <div className="text-xs text-slate-400">@ $5.00/M = ${(usage.totals.allTime.outputTokens / 1_000_000 * 5).toFixed(4)}</div>
+                </div>
+              </div>
+
+              {/* Recent files */}
+              {usage.recentFiles.length > 0 && (
+                <>
+                  <h3 className="text-xs font-medium text-slate-600 mb-2">Recent File Processing</h3>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50">
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">File</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Sheets</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Cost</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">User</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Last Used</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usage.recentFiles.map((f, i) => (
+                          <tr key={i} className="border-t border-slate-100">
+                            <td className="px-3 py-2 max-w-xs truncate" title={f.fileName}>{f.fileName}</td>
+                            <td className="px-3 py-2 text-slate-500">{f.sheets}</td>
+                            <td className="px-3 py-2 font-mono text-xs">${f.cost.toFixed(4)}</td>
+                            <td className="px-3 py-2 text-slate-500 text-xs">{f.user || '—'}</td>
+                            <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{formatDate(f.lastUsed)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <div className="text-sm text-slate-500">No usage data available yet. Process a shift file to start tracking.</div>
           )}
         </div>
 
