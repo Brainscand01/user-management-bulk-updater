@@ -15,7 +15,7 @@ interface ParsedShiftEntry {
   date: string;
   startTime: string;
   endTime: string;
-  status: string; // "working", "off", "leave", "unknown"
+  status: string;
   confidence: 'high' | 'medium' | 'low';
   notes: string;
 }
@@ -38,48 +38,50 @@ CRITICAL RULES:
    - CST (UTC-6): add 8 hours
    - PST (UTC-8): add 10 hours
    Look for clues: column headers like "SA Time", "SA Start", "SAST", or if the file mentions US client names with separate SA time columns
-6. If a day shows "OFF", "WO", "PTO", "AL", "VAC", "MED", "Vacation", "Day OFF" or similar, mark status as "off" or "leave" and leave times empty
+6. ONLY return working shifts. Skip all OFF/leave/PTO/AL/VAC/MED/WO days entirely.
 7. If the AD/username is not present in this sheet, set ad to "" (empty string)
 8. The AD format is typically: first letter of first name + abbreviated surname + 3 digits (e.g., "SMoodl108", "JJohns102"). Other formats: "eNNNNNNN" (Earthlink E-ID)
 9. Agent names may be "First Last", "Last, First", or "Full Name - AD - ID". Normalize to "First Last" format
 10. If a sheet has IN/OFF pattern with separate SA Start/SA End columns, use those time columns for the actual shift times on "IN" days
 11. Date: if actual dates are shown in headers, use them (YYYY-MM-DD). If only day names, use the week commencing date from context
-12. Set confidence to "high" when all data is clear, "medium" when you had to infer something, "low" when guessing
-13. If a sheet is clearly not an agent schedule (summary, rotation template, break pattern), return an empty entries array with a skippedReason
 
-Return valid JSON only. No markdown, no explanation outside JSON.`;
+EXACT OUTPUT FORMAT - you MUST use these exact values:
+- day: MUST be one of exactly: "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" (full names, not abbreviations)
+- status: MUST be exactly "working" (since you're only returning working shifts)
+- confidence: MUST be exactly one of: "high", "medium", "low" (as a string, NOT a number)
+- startTime and endTime: MUST be "HH:MM" 24-hour format strings
+- date: MUST be "YYYY-MM-DD" format
 
-const OUTPUT_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    entries: {
-      type: 'array' as const,
-      items: {
-        type: 'object' as const,
-        properties: {
-          agentName: { type: 'string' as const },
-          ad: { type: 'string' as const },
-          day: { type: 'string' as const, enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] },
-          date: { type: 'string' as const },
-          startTime: { type: 'string' as const },
-          endTime: { type: 'string' as const },
-          status: { type: 'string' as const, enum: ['working', 'off', 'leave', 'unknown'] },
-          confidence: { type: 'string' as const, enum: ['high', 'medium', 'low'] },
-          notes: { type: 'string' as const },
-        },
-        required: ['agentName', 'ad', 'day', 'date', 'startTime', 'endTime', 'status', 'confidence', 'notes'],
-      },
-    },
-    skippedReason: { type: 'string' as const },
-  },
-  required: ['entries'],
+If a sheet is clearly not an agent schedule (summary, rotation template, break pattern), return: {"entries": [], "skippedReason": "reason here"}
+
+Return valid JSON only. No markdown code blocks. No explanation. Just the raw JSON object.`;
+
+const DAY_MAP: Record<string, string> = {
+  'mon': 'Monday', 'monday': 'Monday',
+  'tue': 'Tuesday', 'tues': 'Tuesday', 'tuesday': 'Tuesday',
+  'wed': 'Wednesday', 'wednesday': 'Wednesday',
+  'thu': 'Thursday', 'thur': 'Thursday', 'thurs': 'Thursday', 'thursday': 'Thursday',
+  'fri': 'Friday', 'friday': 'Friday',
+  'sat': 'Saturday', 'saturday': 'Saturday',
+  'sun': 'Sunday', 'sunday': 'Sunday',
 };
 
-function buildSheetPrompt(sheet: SheetPayload, fileName: string): string {
-  // Truncate rows to fit in context - send up to 150 rows
-  const rows = sheet.rows.slice(0, 150);
+function normalizeDayName(day: string): string {
+  if (!day) return '';
+  const mapped = DAY_MAP[day.toLowerCase().trim()];
+  return mapped || day;
+}
 
-  // Format as readable text grid
+function buildSheetPrompt(sheet: SheetPayload, fileName: string): string {
+  // Limit columns for very wide sheets - take first 30 meaningful columns
+  const maxCols = 30;
+  const rows = sheet.rows.slice(0, 120).map(row => {
+    if (row.length > maxCols) {
+      return row.slice(0, maxCols);
+    }
+    return row;
+  });
+
   const grid = rows.map((row, i) =>
     `Row ${i}: ${row.map(c => c === null ? '' : String(c)).join(' | ')}`
   ).join('\n');
@@ -91,7 +93,75 @@ Total rows: ${sheet.totalRows}, Total columns: ${sheet.totalCols}
 Raw cell data (first ${rows.length} rows, pipe-delimited):
 ${grid}
 
-Extract all agent shift assignments from this sheet. Return JSON matching the schema.`;
+Extract all agent shift assignments from this sheet. Return JSON matching the schema. Focus on working shifts only if there are many agents.`;
+}
+
+async function callWithRetry(
+  client: Anthropic,
+  prompt: string,
+  maxRetries = 3,
+): Promise<string> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 16384,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0,
+      });
+
+      const textBlock = response.content.find(b => b.type === 'text');
+      if (!textBlock || textBlock.type !== 'text') {
+        throw new Error('No text in response');
+      }
+
+      return textBlock.text;
+    } catch (err) {
+      const isRateLimit = err instanceof Anthropic.RateLimitError ||
+        (err instanceof Error && err.message.includes('429'));
+
+      if (isRateLimit && attempt < maxRetries) {
+        const waitMs = attempt * 15000; // 15s, 30s, 45s
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Max retries exceeded');
+}
+
+function parseJsonResponse(text: string): { entries: ParsedShiftEntry[]; skippedReason?: string } {
+  let jsonStr = text.trim();
+
+  // Strip markdown code blocks
+  if (jsonStr.startsWith('```')) {
+    jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+  }
+
+  // Try to parse directly
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    // If JSON is truncated, try to salvage partial data
+    // Find the last complete entry by looking for the last "},"
+    const lastComplete = jsonStr.lastIndexOf('},');
+    if (lastComplete > 0) {
+      const truncated = jsonStr.substring(0, lastComplete + 1) + ']}';
+      try {
+        return JSON.parse(truncated);
+      } catch {
+        // Try wrapping
+        try {
+          return JSON.parse(truncated + '}');
+        } catch {
+          // Give up
+        }
+      }
+    }
+    return { entries: [], skippedReason: 'Failed to parse AI response as JSON' };
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -116,43 +186,28 @@ export async function POST(request: NextRequest) {
     const client = new Anthropic({ apiKey });
     const results: SheetResult[] = [];
 
-    // Process sheets sequentially to manage rate limits
-    for (const sheet of sheets) {
+    for (let i = 0; i < sheets.length; i++) {
+      const sheet = sheets[i];
+
       try {
         const userPrompt = buildSheetPrompt(sheet, fileName);
+        const responseText = await callWithRetry(client, userPrompt);
+        const parsed = parseJsonResponse(responseText);
 
-        const response = await client.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 8192,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userPrompt }],
-          // Force JSON output
-          temperature: 0,
-        });
-
-        // Extract text response
-        const textBlock = response.content.find(b => b.type === 'text');
-        if (!textBlock || textBlock.type !== 'text') {
-          results.push({
-            sheetName: sheet.sheetName,
-            entries: [],
-            skippedReason: 'No response from AI',
-          });
-          continue;
-        }
-
-        // Parse JSON from response - handle markdown code blocks
-        let jsonStr = textBlock.text.trim();
-        if (jsonStr.startsWith('```')) {
-          jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-        }
-
-        const parsed = JSON.parse(jsonStr) as { entries: ParsedShiftEntry[]; skippedReason?: string };
-
-        // Validate and clean entries
-        const validEntries = (parsed.entries || []).filter(e =>
-          e.agentName && e.day && (e.status === 'off' || e.status === 'leave' || e.startTime)
-        );
+        // Normalize and validate entries
+        const validEntries = (parsed.entries || [])
+          .map(e => ({
+            ...e,
+            // Normalize day abbreviations to full names
+            day: normalizeDayName(e.day),
+            // Ensure confidence is a string
+            confidence: typeof e.confidence === 'number'
+              ? (e.confidence >= 0.8 ? 'high' : e.confidence >= 0.5 ? 'medium' : 'low')
+              : (e.confidence || 'medium'),
+            // Default status to working if has times
+            status: e.status || (e.startTime ? 'working' : 'off'),
+          }))
+          .filter(e => e.agentName && e.day && e.startTime);
 
         results.push({
           sheetName: sheet.sheetName,
@@ -167,9 +222,13 @@ export async function POST(request: NextRequest) {
           skippedReason: `Parse error: ${msg}`,
         });
       }
+
+      // Pause between sheets to respect rate limits
+      if (i < sheets.length - 1) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
 
-    // Aggregate all entries across sheets
     const allEntries = results.flatMap(r => r.entries);
 
     return NextResponse.json({
