@@ -234,9 +234,14 @@ function ShiftsContent() {
       medium: 'bg-amber-100 text-amber-700',
       low: 'bg-red-100 text-red-700',
     };
+    const labels: Record<string, string> = {
+      high: 'Verified',
+      medium: 'Review',
+      low: 'Uncertain',
+    };
     return (
       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${styles[conf] || 'bg-slate-100'}`}>
-        {conf}
+        {labels[conf] || conf}
       </span>
     );
   };
@@ -380,8 +385,11 @@ function ShiftsContent() {
                   {stats.lowConfidence}
                 </div>
                 <div className={`text-xs ${stats.lowConfidence > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                  Low/Med Confidence
+                  Needs Review
                 </div>
+                {stats.lowConfidence > 0 && (
+                  <div className="text-[10px] text-amber-500 mt-0.5">AI was unsure — verify these entries</div>
+                )}
               </div>
               {parseResult?.usage && (
                 <div className="bg-purple-50 rounded-lg p-3">
@@ -427,7 +435,7 @@ function ShiftsContent() {
                     { key: 'all', label: 'All' },
                     { key: 'working', label: 'Working' },
                     { key: 'off', label: 'Off/Leave' },
-                    { key: 'low-confidence', label: 'Review' },
+                    { key: 'low-confidence', label: 'Needs Review' },
                     { key: 'no-ad', label: 'No AD' },
                   ] as { key: FilterMode; label: string }[]).map(f => (
                     <button

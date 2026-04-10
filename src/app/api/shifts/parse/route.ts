@@ -278,13 +278,77 @@ export async function POST(request: NextRequest) {
 
     const allEntries = results.flatMap(r => r.entries);
     const totalCost = calculateCost(totalInputTokens, totalOutputTokens);
+    const uniqueAgents = new Set(allEntries.map(e => e.ad || e.agentName)).size;
+    const needsReview = allEntries.filter(e => e.confidence === 'low' || e.confidence === 'medium').length;
+    const sheetsSkipped = results.filter(r => r.skippedReason).length;
+
+    // Save parse results to Supabase
+    let parseId: string | null = null;
+    if (supabase) {
+      try {
+        const { data: parseRow } = await supabase
+          .from('shift_parses')
+          .insert({
+            file_name: fileName,
+            sheets_processed: results.length,
+            sheets_skipped: sheetsSkipped,
+            total_entries: allEntries.length,
+            unique_agents: uniqueAgents,
+            needs_review: needsReview,
+            input_tokens: totalInputTokens,
+            output_tokens: totalOutputTokens,
+            cost_usd: totalCost,
+            processed_by: userEmail || null,
+          })
+          .select('id')
+          .single();
+
+        if (parseRow) {
+          parseId = parseRow.id;
+
+          // Insert entries in batches of 100
+          for (let b = 0; b < allEntries.length; b += 100) {
+            const batch = allEntries.slice(b, b + 100).map((e, idx) => {
+              // Find which sheet this entry came from
+              let sheetName = '';
+              let count = 0;
+              for (const r of results) {
+                if (b + idx < count + r.entries.length) {
+                  sheetName = r.sheetName;
+                  break;
+                }
+                count += r.entries.length;
+              }
+              return {
+                parse_id: parseId,
+                sheet_name: sheetName,
+                agent_name: e.agentName,
+                ad: e.ad || null,
+                day: e.day,
+                date: e.date || null,
+                start_time: e.startTime || null,
+                end_time: e.endTime || null,
+                status: e.status,
+                confidence: e.confidence,
+                notes: e.notes || null,
+              };
+            });
+            await supabase.from('shift_parse_entries').insert(batch);
+          }
+        }
+      } catch {
+        // Non-critical — don't fail the response if save fails
+      }
+    }
 
     return NextResponse.json({
       results,
+      parseId,
       totalEntries: allEntries.length,
-      totalAgents: new Set(allEntries.map(e => e.ad || e.agentName)).size,
+      totalAgents: uniqueAgents,
       sheetsProcessed: results.length,
-      sheetsSkipped: results.filter(r => r.skippedReason).length,
+      sheetsSkipped,
+      needsReview,
       usage: {
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
