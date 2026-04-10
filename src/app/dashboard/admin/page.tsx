@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import AuthGuard from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
+import { USD_TO_ZAR } from '@/lib/currency';
 
 interface AppUser {
   id: string;
@@ -209,21 +210,30 @@ function AdminContent() {
               <div className="grid grid-cols-3 gap-4 mb-6">
                 <div className="bg-purple-50 rounded-lg p-4">
                   <div className="text-xs font-medium text-purple-600 mb-1">Today</div>
-                  <div className="text-2xl font-bold text-purple-700">${usage.totals.today.cost.toFixed(4)}</div>
+                  <div className="text-2xl font-bold text-purple-700">
+                    ${usage.totals.today.cost.toFixed(4)}{' '}
+                    <span className="text-base text-purple-500">(R{(usage.totals.today.cost * USD_TO_ZAR).toFixed(2)})</span>
+                  </div>
                   <div className="text-xs text-purple-500 mt-1">
                     {usage.totals.today.calls} calls &middot; {(usage.totals.today.inputTokens + usage.totals.today.outputTokens).toLocaleString()} tokens
                   </div>
                 </div>
                 <div className="bg-blue-50 rounded-lg p-4">
                   <div className="text-xs font-medium text-blue-600 mb-1">This Month</div>
-                  <div className="text-2xl font-bold text-blue-700">${usage.totals.thisMonth.cost.toFixed(4)}</div>
+                  <div className="text-2xl font-bold text-blue-700">
+                    ${usage.totals.thisMonth.cost.toFixed(4)}{' '}
+                    <span className="text-base text-blue-500">(R{(usage.totals.thisMonth.cost * USD_TO_ZAR).toFixed(2)})</span>
+                  </div>
                   <div className="text-xs text-blue-500 mt-1">
                     {usage.totals.thisMonth.calls} calls &middot; {(usage.totals.thisMonth.inputTokens + usage.totals.thisMonth.outputTokens).toLocaleString()} tokens
                   </div>
                 </div>
                 <div className="bg-slate-50 rounded-lg p-4">
                   <div className="text-xs font-medium text-slate-600 mb-1">All Time</div>
-                  <div className="text-2xl font-bold text-slate-900">${usage.totals.allTime.cost.toFixed(4)}</div>
+                  <div className="text-2xl font-bold text-slate-900">
+                    ${usage.totals.allTime.cost.toFixed(4)}{' '}
+                    <span className="text-base text-slate-500">(R{(usage.totals.allTime.cost * USD_TO_ZAR).toFixed(2)})</span>
+                  </div>
                   <div className="text-xs text-slate-500 mt-1">
                     {usage.totals.allTime.calls} calls &middot; {(usage.totals.allTime.inputTokens + usage.totals.allTime.outputTokens).toLocaleString()} tokens
                   </div>
@@ -264,7 +274,7 @@ function AdminContent() {
                           <tr key={i} className="border-t border-slate-100">
                             <td className="px-3 py-2 max-w-xs truncate" title={f.fileName}>{f.fileName}</td>
                             <td className="px-3 py-2 text-slate-500">{f.sheets}</td>
-                            <td className="px-3 py-2 font-mono text-xs">${f.cost.toFixed(4)}</td>
+                            <td className="px-3 py-2 font-mono text-xs">${f.cost.toFixed(4)} <span className="text-slate-400">(R{(f.cost * USD_TO_ZAR).toFixed(2)})</span></td>
                             <td className="px-3 py-2 text-slate-500 text-xs">{f.user || '—'}</td>
                             <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{formatDate(f.lastUsed)}</td>
                           </tr>

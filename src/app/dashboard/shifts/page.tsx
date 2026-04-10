@@ -6,6 +6,7 @@ import NavHeader from '@/components/NavHeader';
 import FileUploader from '@/components/FileUploader';
 import { extractSheetData, identifyScheduleSheets, SheetData } from '@/lib/shift-extractor';
 import * as XLSX from 'xlsx';
+import { USD_TO_ZAR } from '@/lib/currency';
 
 interface ParsedShiftEntry {
   agentName: string;
@@ -385,7 +386,10 @@ function ShiftsContent() {
               {parseResult?.usage && (
                 <div className="bg-purple-50 rounded-lg p-3">
                   <div className="text-2xl font-bold text-purple-700">
-                    ${parseResult.usage.costUsd.toFixed(4)}
+                    ${parseResult.usage.costUsd.toFixed(4)}{' '}
+                    <span className="text-base font-semibold text-purple-500">
+                      (R{(parseResult.usage.costUsd * USD_TO_ZAR).toFixed(2)})
+                    </span>
                   </div>
                   <div className="text-xs text-purple-600">
                     Parse Cost ({parseResult.usage.inputTokens.toLocaleString()}↓ {parseResult.usage.outputTokens.toLocaleString()}↑)
