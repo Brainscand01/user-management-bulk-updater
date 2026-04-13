@@ -9,9 +9,11 @@ interface IncomingMapping {
   start_time?: string;
   end_time?: string;
   label?: string;
-  campaign?: string;
-  notes?: string;
+  is_weekends?: boolean;
+  created_by?: string;
+  created_date?: string;
   active?: boolean;
+  notes?: string;
 }
 
 function sb() {
@@ -19,6 +21,27 @@ function sb() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return null;
   return createClient(url, key);
+}
+
+function parseBool(v: unknown, fallback: boolean): boolean {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes' || s === 'y') return true;
+    if (s === 'false' || s === '0' || s === 'no' || s === 'n' || s === '') return fallback;
+  }
+  return fallback;
+}
+
+function parseDate(v: unknown): string | null {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  // Accept ISO with trailing 'Z' or '+00' variants
+  const cleaned = s.replace(/ Z$/, '+00').replace(/Z$/, '+00');
+  const d = new Date(cleaned);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
 
 export async function POST(request: NextRequest) {
@@ -38,7 +61,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'rows array required' }, { status: 400 });
     }
 
-    // Normalize
     const rows = body.rows
       .filter(r => r && r.shift_id)
       .map(r => {
@@ -50,19 +72,20 @@ export async function POST(request: NextRequest) {
           start_time: start || null,
           end_time: end || null,
           label: label || r.shift_id,
-          campaign: r.campaign?.trim() || null,
+          is_weekends: parseBool(r.is_weekends, false),
+          created_by: r.created_by?.trim() || null,
+          created_date: parseDate(r.created_date),
+          active: parseBool(r.active, true),
           notes: r.notes?.trim() || null,
-          active: r.active !== false,
           updated_at: new Date().toISOString(),
           updated_by: body.actorEmail || null,
         };
       });
 
-    // Fetch existing for diff
     const ids = rows.map(r => r.shift_id);
     const { data: existing } = await supabase
       .from('um_shift_mappings')
-      .select('shift_id, start_time, end_time, label, active')
+      .select('shift_id, start_time, end_time, label, active, is_weekends')
       .in('shift_id', ids);
 
     const existingMap = new Map((existing || []).map(e => [e.shift_id, e]));
@@ -79,7 +102,8 @@ export async function POST(request: NextRequest) {
         ex.start_time !== r.start_time ||
         ex.end_time !== r.end_time ||
         ex.label !== r.label ||
-        ex.active !== r.active
+        ex.active !== r.active ||
+        ex.is_weekends !== r.is_weekends
       ) {
         updated++;
         changedIds.push(r.shift_id);
@@ -88,7 +112,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Batch upsert — 200 per batch for safety
     for (let b = 0; b < rows.length; b += 200) {
       const batch = rows.slice(b, b + 200);
       const { error } = await supabase
@@ -101,7 +124,6 @@ export async function POST(request: NextRequest) {
 
     let deactivated = 0;
     if (body.deactivateMissing) {
-      // Set active=false for any mapping not in the uploaded set
       const { data: all } = await supabase
         .from('um_shift_mappings')
         .select('shift_id')

@@ -12,7 +12,9 @@ interface Mapping {
   label: string;
   start_time: string | null;
   end_time: string | null;
-  campaign: string | null;
+  is_weekends: boolean;
+  created_by: string | null;
+  created_date: string | null;
   active: boolean;
   notes: string | null;
   updated_at: string;
@@ -24,9 +26,11 @@ interface IncomingRow {
   start_time: string;
   end_time: string;
   label?: string;
-  campaign?: string;
-  notes?: string;
+  is_weekends?: boolean;
+  created_by?: string;
+  created_date?: string;
   active?: boolean;
+  notes?: string;
 }
 
 type Diff = {
@@ -35,33 +39,75 @@ type Diff = {
   before?: Mapping;
 };
 
+/**
+ * Tolerates Snowflake export column names (_ID, STARTTIME, ENDTIME, ISWEEKENDS,
+ * CREATEDBY, CREATEDATE, ACTIVE) as well as lowercase/snake variants.
+ * Ignores any extra Hevo metadata columns.
+ */
+function splitCSVLine(line: string): string[] {
+  // Minimal CSV split that honors quoted fields with embedded commas
+  const out: string[] = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (c === ',' && !inQ) {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out.map(s => s.trim().replace(/^"|"$/g, ''));
+}
+
 function parseCSV(text: string): IncomingRow[] {
   const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length < 2) return [];
-  const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
-  const idxOf = (name: string) => header.findIndex(h => h === name.toLowerCase());
-  const shiftIdx = idxOf('shift_id');
-  const startIdx = idxOf('start_time');
-  const endIdx = idxOf('end_time');
-  const labelIdx = idxOf('label');
-  const campaignIdx = idxOf('campaign');
-  const notesIdx = idxOf('notes');
+  const header = splitCSVLine(lines[0]).map(h => h.toLowerCase().replace(/^_+/, ''));
 
-  if (shiftIdx === -1 || startIdx === -1 || endIdx === -1) {
-    throw new Error('CSV must include columns: SHIFT_ID, START_TIME, END_TIME');
+  const find = (...names: string[]) => {
+    for (const n of names) {
+      const i = header.indexOf(n.toLowerCase());
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+
+  const idIdx = find('id', 'shift_id', 'shiftid');
+  const startIdx = find('starttime', 'start_time');
+  const endIdx = find('endtime', 'end_time');
+  const weekendsIdx = find('isweekends', 'is_weekends', 'weekends');
+  const createdByIdx = find('createdby', 'created_by');
+  const createdDateIdx = find('createdate', 'created_date', 'createddate');
+  const activeIdx = find('active');
+  const labelIdx = find('label');
+  const notesIdx = find('notes');
+
+  if (idIdx === -1 || startIdx === -1 || endIdx === -1) {
+    throw new Error('CSV must include columns: _ID (or SHIFT_ID), STARTTIME, ENDTIME');
   }
 
-  return lines.slice(1).map(line => {
-    const cells = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-    return {
-      shift_id: cells[shiftIdx] || '',
-      start_time: cells[startIdx] || '',
-      end_time: cells[endIdx] || '',
-      label: labelIdx >= 0 ? cells[labelIdx] : undefined,
-      campaign: campaignIdx >= 0 ? cells[campaignIdx] : undefined,
-      notes: notesIdx >= 0 ? cells[notesIdx] : undefined,
-    };
-  }).filter(r => r.shift_id);
+  return lines.slice(1)
+    .map(line => {
+      const cells = splitCSVLine(line);
+      return {
+        shift_id: cells[idIdx] || '',
+        start_time: cells[startIdx] || '',
+        end_time: cells[endIdx] || '',
+        is_weekends: weekendsIdx >= 0 ? /^(true|1|yes|y)$/i.test(cells[weekendsIdx] || '') : false,
+        created_by: createdByIdx >= 0 ? cells[createdByIdx] : undefined,
+        created_date: createdDateIdx >= 0 ? cells[createdDateIdx] : undefined,
+        active: activeIdx >= 0 ? /^(true|1|yes|y)$/i.test(cells[activeIdx] || '') : true,
+        label: labelIdx >= 0 ? cells[labelIdx] : undefined,
+        notes: notesIdx >= 0 ? cells[notesIdx] : undefined,
+      };
+    })
+    .filter(r => r.shift_id);
 }
 
 function MappingsContent() {
@@ -70,6 +116,7 @@ function MappingsContent() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showInactive, setShowInactive] = useState(false);
+  const [weekendFilter, setWeekendFilter] = useState<'all' | 'weekdays' | 'weekends'>('all');
 
   const [pending, setPending] = useState<IncomingRow[] | null>(null);
   const [pendingFileName, setPendingFileName] = useState('');
@@ -94,16 +141,18 @@ function MappingsContent() {
   const filtered = useMemo(() => {
     let rows = mappings;
     if (!showInactive) rows = rows.filter(m => m.active);
+    if (weekendFilter === 'weekdays') rows = rows.filter(m => !m.is_weekends);
+    if (weekendFilter === 'weekends') rows = rows.filter(m => m.is_weekends);
     if (search) {
       const t = search.toLowerCase();
       rows = rows.filter(m =>
         m.shift_id.toLowerCase().includes(t) ||
         m.label.toLowerCase().includes(t) ||
-        (m.campaign || '').toLowerCase().includes(t)
+        (m.created_by || '').toLowerCase().includes(t)
       );
     }
     return rows;
-  }, [mappings, showInactive, search]);
+  }, [mappings, showInactive, weekendFilter, search]);
 
   const mappingByShiftId = useMemo(() => {
     const m = new Map<string, Mapping>();
@@ -120,7 +169,9 @@ function MappingsContent() {
       const changed =
         before.start_time !== (row.start_time || null) ||
         before.end_time !== (row.end_time || null) ||
-        before.label !== newLabel;
+        before.label !== newLabel ||
+        before.is_weekends !== !!row.is_weekends ||
+        before.active !== (row.active !== false);
       return { row, state: changed ? 'changed' as const : 'unchanged' as const, before };
     });
   }, [pending, mappingByShiftId]);
@@ -195,9 +246,9 @@ function MappingsContent() {
   }
 
   function exportCSV() {
-    const header = 'SHIFT_ID,START_TIME,END_TIME,LABEL,CAMPAIGN,ACTIVE,NOTES';
+    const header = '_ID,STARTTIME,ENDTIME,ISWEEKENDS,CREATEDBY,CREATEDATE,ACTIVE,LABEL,NOTES';
     const rows = mappings.map(m =>
-      `"${m.shift_id}","${m.start_time || ''}","${m.end_time || ''}","${m.label}","${m.campaign || ''}",${m.active ? 1 : 0},"${(m.notes || '').replace(/"/g, '""')}"`
+      `"${m.shift_id}","${m.start_time || ''}","${m.end_time || ''}",${m.is_weekends},"${m.created_by || ''}","${m.created_date || ''}",${m.active},"${m.label}","${(m.notes || '').replace(/"/g, '""')}"`
     );
     const csv = [header, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -216,7 +267,7 @@ function MappingsContent() {
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         <PageHeader
           title="Shift Mappings"
-          description="Master list mapping Portelo Shift IDs to time ranges. Used when submitting Shift Updates — the parser matches agent shift times against this table to find the correct Shift ID. Upload a CSV to add or update entries; re-upload the file any time the master list changes."
+          description="Master shift list mirrored from Snowflake (DATAWAREHOUSE.MARKETIC_USERMANAGEMENTPROD_HEVO.AgentShiftTime). Used when submitting Shift Updates — the parser matches agent shift times against this table to find the correct Shift ID. Upload a CSV (Snowflake export or 3-column trimmed) to add or update entries; re-upload whenever the master list changes."
         />
 
         {/* Upload card */}
@@ -225,15 +276,15 @@ function MappingsContent() {
             <div>
               <h2 className="text-sm font-medium text-slate-700">Upload / Update via CSV</h2>
               <p className="text-xs text-slate-500 mt-1">
-                Required columns: <code className="text-[11px] bg-slate-100 px-1 rounded">SHIFT_ID</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">START_TIME</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">END_TIME</code>.
-                Optional: <code className="text-[11px] bg-slate-100 px-1 rounded">LABEL</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">CAMPAIGN</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">NOTES</code>.
-                Upsert is keyed on <code className="text-[11px] bg-slate-100 px-1 rounded">SHIFT_ID</code> — safe to re-upload.
+                Required: <code className="text-[11px] bg-slate-100 px-1 rounded">_ID</code> (or <code className="text-[11px] bg-slate-100 px-1 rounded">SHIFT_ID</code>), <code className="text-[11px] bg-slate-100 px-1 rounded">STARTTIME</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">ENDTIME</code>.
+                Optional: <code className="text-[11px] bg-slate-100 px-1 rounded">ISWEEKENDS</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">CREATEDBY</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">CREATEDATE</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">ACTIVE</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">LABEL</code>, <code className="text-[11px] bg-slate-100 px-1 rounded">NOTES</code>.
+                Any Hevo metadata columns are ignored. Upsert is keyed on the ID — safe to re-upload.
               </p>
             </div>
             <button
               onClick={exportCSV}
               disabled={mappings.length === 0}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200 transition-colors disabled:opacity-50 whitespace-nowrap"
             >
               Download current as CSV
             </button>
@@ -309,6 +360,8 @@ function MappingsContent() {
                       <th className="px-3 py-2 text-left font-medium text-slate-600">Shift ID</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">Start</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">End</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">Wknd</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">Active</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">Change</th>
                     </tr>
                   </thead>
@@ -327,10 +380,14 @@ function MappingsContent() {
                         <td className="px-3 py-1.5 font-mono text-[10px]">{d.row.shift_id}</td>
                         <td className="px-3 py-1.5 font-mono">{d.row.start_time}</td>
                         <td className="px-3 py-1.5 font-mono">{d.row.end_time}</td>
+                        <td className="px-3 py-1.5">{d.row.is_weekends ? 'Y' : '—'}</td>
+                        <td className="px-3 py-1.5">{d.row.active === false ? 'N' : 'Y'}</td>
                         <td className="px-3 py-1.5 text-slate-500">
                           {d.state === 'changed' && d.before && (
                             <span className="font-mono text-[10px]">
-                              was {d.before.start_time || '—'} → {d.before.end_time || '—'}
+                              was {d.before.start_time || '—'}→{d.before.end_time || '—'}
+                              {d.before.is_weekends !== !!d.row.is_weekends && `, wknd ${d.before.is_weekends ? 'Y' : 'N'}→${d.row.is_weekends ? 'Y' : 'N'}`}
+                              {d.before.active !== (d.row.active !== false) && `, active ${d.before.active ? 'Y' : 'N'}→${d.row.active === false ? 'N' : 'Y'}`}
                             </span>
                           )}
                         </td>
@@ -364,9 +421,26 @@ function MappingsContent() {
         <div className="bg-white rounded-lg border border-slate-200 p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-medium text-slate-700">
-              Current Mappings ({filtered.length}{!showInactive && mappings.some(m => !m.active) ? ` of ${mappings.length}` : ''})
+              Current Mappings ({filtered.length}{filtered.length !== mappings.length ? ` of ${mappings.length}` : ''})
             </h2>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex gap-1 bg-slate-100 p-0.5 rounded-md">
+                {([
+                  { k: 'all', l: 'All' },
+                  { k: 'weekdays', l: 'Weekdays' },
+                  { k: 'weekends', l: 'Weekends' },
+                ] as const).map(f => (
+                  <button
+                    key={f.k}
+                    onClick={() => setWeekendFilter(f.k)}
+                    className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+                      weekendFilter === f.k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {f.l}
+                  </button>
+                ))}
+              </div>
               <label className="flex items-center gap-1.5 text-xs text-slate-600">
                 <input
                   type="checkbox"
@@ -377,10 +451,10 @@ function MappingsContent() {
               </label>
               <input
                 type="text"
-                placeholder="Search shift id, label, campaign..."
+                placeholder="Search shift id, label, creator..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="px-3 py-1.5 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-72"
+                className="px-3 py-1.5 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-60"
               />
             </div>
           </div>
@@ -396,9 +470,9 @@ function MappingsContent() {
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Start</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">End</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Shift ID</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-600">Campaign</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600">Weekends</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Active</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-600">Updated</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600">Created</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -408,7 +482,13 @@ function MappingsContent() {
                       <td className="px-3 py-1.5 font-mono text-xs">{m.start_time || '—'}</td>
                       <td className="px-3 py-1.5 font-mono text-xs">{m.end_time || '—'}</td>
                       <td className="px-3 py-1.5 font-mono text-[10px] text-slate-500">{m.shift_id}</td>
-                      <td className="px-3 py-1.5 text-slate-500">{m.campaign || '—'}</td>
+                      <td className="px-3 py-1.5">
+                        {m.is_weekends ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700">weekends</span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">weekdays</span>
+                        )}
+                      </td>
                       <td className="px-3 py-1.5">
                         {m.active ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">active</span>
@@ -417,8 +497,8 @@ function MappingsContent() {
                         )}
                       </td>
                       <td className="px-3 py-1.5 text-xs text-slate-500">
-                        {new Date(m.updated_at).toLocaleDateString('en-ZA')}
-                        {m.updated_by && <span className="block text-[10px] opacity-70">{m.updated_by}</span>}
+                        {m.created_date ? new Date(m.created_date).toLocaleDateString('en-ZA') : '—'}
+                        {m.created_by && <span className="block text-[10px] opacity-70 font-mono">{m.created_by.slice(0, 10)}…</span>}
                       </td>
                     </tr>
                   ))}
