@@ -102,23 +102,110 @@ function ShiftsContent() {
     setParseResult(null);
 
     const sheetsToSend = sheets.filter(s => selectedSheets.has(s.sheetName));
-    setParseProgress(`Sending ${sheetsToSend.length} sheets to AI for analysis...`);
+    const accumulatedResults: SheetResult[] = [];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalCost = 0;
 
     try {
-      const res = await fetch('/api/shifts/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName, sheets: sheetsToSend, userEmail: user?.email }),
-      });
+      // Process sheets one at a time to stay under serverless timeouts
+      for (let i = 0; i < sheetsToSend.length; i++) {
+        const sheet = sheetsToSend[i];
+        setParseProgress(`Parsing sheet ${i + 1} of ${sheetsToSend.length}: ${sheet.sheetName}`);
 
-      const data = await res.json();
+        let attempt = 0;
+        let data: Record<string, unknown> | null = null;
+        let lastError = '';
+        while (attempt < 2 && !data) {
+          attempt++;
+          try {
+            const res = await fetch('/api/shifts/parse', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileName, sheet, userEmail: user?.email }),
+            });
+            const text = await res.text();
+            try {
+              data = JSON.parse(text);
+            } catch {
+              lastError = `Server returned non-JSON (${res.status}): ${text.slice(0, 120)}`;
+              data = null;
+            }
+          } catch (err) {
+            lastError = err instanceof Error ? err.message : 'Network error';
+          }
+        }
 
-      if (data.error) {
-        setError(data.error);
-      } else {
-        setParseResult(data as ParseResponse);
-        setParseProgress('');
+        if (!data || (data as { error?: string }).error) {
+          accumulatedResults.push({
+            sheetName: sheet.sheetName,
+            entries: [],
+            skippedReason: (data as { error?: string })?.error || lastError || 'Unknown error',
+          });
+          continue;
+        }
+
+        const sheetData = data as {
+          results: SheetResult[];
+          usage?: { inputTokens: number; outputTokens: number; costUsd: number };
+        };
+        if (sheetData.results?.[0]) {
+          accumulatedResults.push(sheetData.results[0]);
+        }
+        if (sheetData.usage) {
+          totalInputTokens += sheetData.usage.inputTokens;
+          totalOutputTokens += sheetData.usage.outputTokens;
+          totalCost += sheetData.usage.costUsd;
+        }
       }
+
+      // Finalize — save aggregated parse record + entries to DB
+      setParseProgress('Saving results...');
+      let parseId: string | null = null;
+      try {
+        const finRes = await fetch('/api/shifts/finalize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName,
+            results: accumulatedResults,
+            totalInputTokens,
+            totalOutputTokens,
+            totalCost,
+            userEmail: user?.email,
+          }),
+        });
+        const finData = await finRes.json();
+        parseId = finData.parseId || null;
+      } catch {
+        // non-fatal — results still shown in-memory
+      }
+
+      const allParsed = accumulatedResults.flatMap(r => r.entries);
+      const sheetsSkipped = accumulatedResults.filter(r => r.skippedReason).length;
+      const needsReview = allParsed.filter(e => e.confidence === 'low' || e.confidence === 'medium').length;
+      const uniqueAgents = new Set(allParsed.map(e => e.ad || e.agentName)).size;
+
+      setParseResult({
+        results: accumulatedResults,
+        totalEntries: allParsed.length,
+        totalAgents: uniqueAgents,
+        sheetsProcessed: accumulatedResults.length,
+        sheetsSkipped,
+        usage: {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          costUsd: totalCost,
+        },
+      });
+      // Surface review hint if any sheet failed
+      const failed = accumulatedResults.filter(r => r.skippedReason && r.entries.length === 0);
+      if (failed.length > 0) {
+        setError(`${failed.length} sheet(s) failed to parse: ${failed.slice(0, 3).map(r => r.sheetName).join(', ')}${failed.length > 3 ? '…' : ''}`);
+      }
+      // Use parseId to suppress unused-var warning; currently just consumed if needed later
+      if (parseId) void parseId;
+      setParseProgress('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse shifts');
     }

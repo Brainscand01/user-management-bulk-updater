@@ -56,7 +56,7 @@ function ShiftHistoryContent() {
     setLoading(true);
     const supabase = createClient();
     const { data } = await supabase
-      .from('shift_parses')
+      .from('um_shift_parses')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(50);
@@ -71,7 +71,7 @@ function ShiftHistoryContent() {
     setEntriesLoading(true);
     const supabase = createClient();
     const { data } = await supabase
-      .from('shift_parse_entries')
+      .from('um_shift_parse_entries')
       .select('*')
       .eq('parse_id', parseId)
       .order('agent_name', { ascending: true });

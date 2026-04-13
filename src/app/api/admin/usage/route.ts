@@ -14,7 +14,7 @@ export async function GET() {
 
     // Get all usage records, ordered by most recent
     const { data: records, error } = await supabase
-      .from('api_usage')
+      .from('um_api_usage')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(500);

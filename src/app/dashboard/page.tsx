@@ -85,7 +85,7 @@ function DashboardContent() {
 
     // Create batch in Supabase
     const supabase = createClient();
-    const { data: batch } = await supabase.from('batches').insert({
+    const { data: batch } = await supabase.from('um_batches').insert({
       operation: parseResults.operation,
       file_name: fileName,
       total_records: validRows.length,
@@ -134,7 +134,7 @@ function DashboardContent() {
 
         // Save record to Supabase
         if (batchId) {
-          await supabase.from('batch_records').insert({
+          await supabase.from('um_batch_records').insert({
             batch_id: batchId,
             row_number: idx + 1,
             employee_name: `${row['Name'] || ''} ${row['Surname'] || ''}`.trim(),
@@ -167,7 +167,7 @@ function DashboardContent() {
         ));
 
         if (batchId) {
-          await supabase.from('batch_records').insert({
+          await supabase.from('um_batch_records').insert({
             batch_id: batchId,
             row_number: idx + 1,
             employee_name: `${row['Name'] || ''} ${row['Surname'] || ''}`.trim(),
@@ -184,7 +184,7 @@ function DashboardContent() {
 
     // Update batch
     if (batchId) {
-      await supabase.from('batches').update({
+      await supabase.from('um_batches').update({
         successful: successCount,
         failed: failCount,
         status: failCount === 0 ? 'completed' : successCount === 0 ? 'completed' : 'partial',

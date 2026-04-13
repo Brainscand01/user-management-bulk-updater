@@ -183,6 +183,9 @@ function parseJsonResponse(text: string): { entries: ParsedShiftEntry[]; skipped
   }
 }
 
+// Allow up to 5 minutes per sheet (Pro). Hobby caps at 60s — single sheet calls stay under.
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -193,11 +196,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { fileName, sheets, userEmail } = await request.json() as {
+    const body = await request.json() as {
       fileName: string;
-      sheets: SheetPayload[];
+      sheets?: SheetPayload[];
+      sheet?: SheetPayload;
       userEmail?: string;
     };
+    const { fileName, userEmail } = body;
+
+    // Support BOTH legacy multi-sheet mode AND new single-sheet mode
+    const sheets: SheetPayload[] = body.sheet ? [body.sheet] : (body.sheets || []);
+    const singleSheetMode = !!body.sheet;
 
     if (!sheets || sheets.length === 0) {
       return NextResponse.json({ error: 'No sheet data provided' }, { status: 400 });
@@ -230,7 +239,7 @@ export async function POST(request: NextRequest) {
         // Log usage to Supabase
         if (supabase) {
           const cost = calculateCost(apiResult.inputTokens, apiResult.outputTokens);
-          await supabase.from('api_usage').insert({
+          await supabase.from('um_api_usage').insert({
             file_name: fileName,
             sheet_name: sheet.sheetName,
             input_tokens: apiResult.inputTokens,
@@ -282,12 +291,13 @@ export async function POST(request: NextRequest) {
     const needsReview = allEntries.filter(e => e.confidence === 'low' || e.confidence === 'medium').length;
     const sheetsSkipped = results.filter(r => r.skippedReason).length;
 
-    // Save parse results to Supabase
+    // Skip DB save when called in single-sheet mode — client will call /api/shifts/finalize
+    // after processing all sheets
     let parseId: string | null = null;
-    if (supabase) {
+    if (supabase && !singleSheetMode) {
       try {
         const { data: parseRow } = await supabase
-          .from('shift_parses')
+          .from('um_shift_parses')
           .insert({
             file_name: fileName,
             sheets_processed: results.length,
@@ -333,7 +343,7 @@ export async function POST(request: NextRequest) {
                 notes: e.notes || null,
               };
             });
-            await supabase.from('shift_parse_entries').insert(batch);
+            await supabase.from('um_shift_parse_entries').insert(batch);
           }
         }
       } catch {

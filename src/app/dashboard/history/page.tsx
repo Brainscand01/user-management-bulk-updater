@@ -45,7 +45,7 @@ function HistoryContent() {
   async function loadBatches() {
     const supabase = createClient();
     const { data } = await supabase
-      .from('batches')
+      .from('um_batches')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(50);
@@ -58,7 +58,7 @@ function HistoryContent() {
     setRecordFilter('all');
     const supabase = createClient();
     const { data } = await supabase
-      .from('batch_records')
+      .from('um_batch_records')
       .select('*')
       .eq('batch_id', batchId)
       .order('row_number', { ascending: true });
