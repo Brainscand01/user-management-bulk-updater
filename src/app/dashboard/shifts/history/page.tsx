@@ -48,6 +48,9 @@ function ShiftHistoryContent() {
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entryFilter, setEntryFilter] = useState<EntryFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Partial<ShiftEntry>>({});
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     loadParses();
@@ -157,6 +160,86 @@ function ShiftHistoryContent() {
       hour: '2-digit', minute: '2-digit',
     });
   };
+
+  function beginEdit(e: ShiftEntry) {
+    setEditingId(e.id);
+    setEditDraft({
+      start_time: e.start_time,
+      end_time: e.end_time,
+      ad: e.ad,
+      status: e.status,
+      confidence: e.confidence,
+      notes: e.notes,
+    });
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditDraft({});
+  }
+
+  async function saveEdit(id: string) {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/shifts/entries/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editDraft),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Save failed: ${data.error || 'unknown error'}`);
+        setSaving(false);
+        return;
+      }
+      // Update local state
+      setEntries(prev => prev.map(e => e.id === id ? { ...e, ...data.entry } : e));
+      setEditingId(null);
+      setEditDraft({});
+    } catch (err) {
+      alert(`Save failed: ${err instanceof Error ? err.message : 'network error'}`);
+    }
+    setSaving(false);
+  }
+
+  async function deleteEntry(id: string) {
+    if (!confirm('Delete this shift entry? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`/api/shifts/entries/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Delete failed: ${data.error || 'unknown error'}`);
+        return;
+      }
+      setEntries(prev => prev.filter(e => e.id !== id));
+    } catch (err) {
+      alert(`Delete failed: ${err instanceof Error ? err.message : 'network error'}`);
+    }
+  }
+
+  // Derive a human-readable reason when notes is empty but the entry needs review
+  function reviewReason(e: ShiftEntry): string {
+    if (e.notes) return e.notes;
+    if (e.confidence === 'high') return '';
+    if (!e.start_time || !e.end_time) return 'AI could not extract shift times — please verify';
+    // Detect implausible duration
+    const sm = timeToMinutes(e.start_time);
+    const em = timeToMinutes(e.end_time);
+    if (sm !== null && em !== null) {
+      const dur = em >= sm ? em - sm : (1440 - sm) + em;
+      const hrs = dur / 60;
+      if (hrs > 14) return `Duration ${hrs.toFixed(1)}h is very long — likely AM/PM mis-read`;
+      if (hrs < 2) return `Duration ${hrs.toFixed(1)}h is very short — likely AM/PM mis-read`;
+    }
+    return 'AI was uncertain — please verify';
+  }
+
+  function timeToMinutes(t: string | null): number | null {
+    if (!t) return null;
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t);
+    if (!m) return null;
+    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  }
 
   const confidenceBadge = (conf: string) => {
     const styles: Record<string, string> = {
@@ -328,27 +411,133 @@ function ShiftHistoryContent() {
                       <th className="px-3 py-2 text-left font-medium text-slate-600">Date</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">Start</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">End</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">Hrs</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">Confidence</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">Review reason / notes</th>
                       <th className="px-3 py-2 text-left font-medium text-slate-600">Sheet</th>
-                      <th className="px-3 py-2 text-left font-medium text-slate-600">Notes</th>
+                      <th className="px-3 py-2 text-right font-medium text-slate-600">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredEntries.slice(0, 500).map(e => (
-                      <tr key={e.id} className="border-t border-slate-100 hover:bg-slate-50">
-                        <td className="px-3 py-1.5 whitespace-nowrap">{e.agent_name}</td>
-                        <td className="px-3 py-1.5 whitespace-nowrap font-mono text-xs">
-                          {e.ad || <span className="text-slate-400">—</span>}
-                        </td>
-                        <td className="px-3 py-1.5 whitespace-nowrap text-slate-600">{e.day}</td>
-                        <td className="px-3 py-1.5 whitespace-nowrap text-slate-500">{e.date || '—'}</td>
-                        <td className="px-3 py-1.5 whitespace-nowrap font-mono text-xs">{e.start_time || '—'}</td>
-                        <td className="px-3 py-1.5 whitespace-nowrap font-mono text-xs">{e.end_time || '—'}</td>
-                        <td className="px-3 py-1.5">{confidenceBadge(e.confidence)}</td>
-                        <td className="px-3 py-1.5 text-slate-500 text-xs max-w-[120px] truncate" title={e.sheet_name}>{e.sheet_name || '—'}</td>
-                        <td className="px-3 py-1.5 text-slate-500 max-w-xs truncate" title={e.notes || ''}>{e.notes || '—'}</td>
-                      </tr>
-                    ))}
+                    {filteredEntries.slice(0, 500).map(e => {
+                      const isEditing = editingId === e.id;
+                      const sm = timeToMinutes(isEditing ? (editDraft.start_time ?? null) : e.start_time);
+                      const em = timeToMinutes(isEditing ? (editDraft.end_time ?? null) : e.end_time);
+                      const durHrs = sm !== null && em !== null
+                        ? ((em >= sm ? em - sm : (1440 - sm) + em) / 60)
+                        : null;
+                      const durBadly = durHrs !== null && (durHrs < 2 || durHrs > 14);
+                      const reason = reviewReason(e);
+
+                      return (
+                        <tr key={e.id} className={`border-t border-slate-100 ${isEditing ? 'bg-amber-50/60' : 'hover:bg-slate-50'}`}>
+                          <td className="px-3 py-1.5 whitespace-nowrap">{e.agent_name}</td>
+                          <td className="px-3 py-1.5 whitespace-nowrap font-mono text-xs">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editDraft.ad ?? ''}
+                                onChange={ev => setEditDraft(d => ({ ...d, ad: ev.target.value }))}
+                                className="w-24 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-xs"
+                                placeholder="AD"
+                              />
+                            ) : (e.ad || <span className="text-slate-400">—</span>)}
+                          </td>
+                          <td className="px-3 py-1.5 whitespace-nowrap text-slate-600">{e.day}</td>
+                          <td className="px-3 py-1.5 whitespace-nowrap text-slate-500">{e.date || '—'}</td>
+                          <td className="px-3 py-1.5 whitespace-nowrap font-mono text-xs">
+                            {isEditing ? (
+                              <input
+                                type="time"
+                                value={editDraft.start_time ?? ''}
+                                onChange={ev => setEditDraft(d => ({ ...d, start_time: ev.target.value }))}
+                                className="w-24 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-xs"
+                              />
+                            ) : (e.start_time || '—')}
+                          </td>
+                          <td className="px-3 py-1.5 whitespace-nowrap font-mono text-xs">
+                            {isEditing ? (
+                              <input
+                                type="time"
+                                value={editDraft.end_time ?? ''}
+                                onChange={ev => setEditDraft(d => ({ ...d, end_time: ev.target.value }))}
+                                className="w-24 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-xs"
+                              />
+                            ) : (e.end_time || '—')}
+                          </td>
+                          <td className="px-3 py-1.5 whitespace-nowrap text-xs font-mono">
+                            {durHrs !== null ? (
+                              <span className={durBadly ? 'text-red-600 font-semibold' : 'text-slate-500'}>
+                                {durHrs.toFixed(1)}h
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            {isEditing ? (
+                              <select
+                                value={editDraft.confidence ?? 'high'}
+                                onChange={ev => setEditDraft(d => ({ ...d, confidence: ev.target.value }))}
+                                className="px-1.5 py-0.5 border border-slate-300 rounded text-xs"
+                              >
+                                <option value="high">Verified</option>
+                                <option value="medium">Review</option>
+                                <option value="low">Uncertain</option>
+                              </select>
+                            ) : confidenceBadge(e.confidence)}
+                          </td>
+                          <td className="px-3 py-1.5 text-slate-600 max-w-xs">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editDraft.notes ?? ''}
+                                onChange={ev => setEditDraft(d => ({ ...d, notes: ev.target.value }))}
+                                className="w-full px-1.5 py-0.5 border border-slate-300 rounded text-xs"
+                                placeholder="Notes"
+                              />
+                            ) : reason ? (
+                              <span className="text-xs text-amber-700 truncate block" title={reason}>{reason}</span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-1.5 text-slate-500 text-xs max-w-[120px] truncate" title={e.sheet_name}>{e.sheet_name || '—'}</td>
+                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                            {isEditing ? (
+                              <div className="inline-flex gap-1">
+                                <button
+                                  onClick={() => saveEdit(e.id)}
+                                  disabled={saving}
+                                  className="px-2 py-0.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded disabled:opacity-50"
+                                >
+                                  {saving ? 'Saving…' : 'Save'}
+                                </button>
+                                <button
+                                  onClick={cancelEdit}
+                                  className="px-2 py-0.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="inline-flex gap-1">
+                                <button
+                                  onClick={() => beginEdit(e)}
+                                  className="px-2 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => deleteEntry(e.id)}
+                                  className="px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 {filteredEntries.length > 500 && (
