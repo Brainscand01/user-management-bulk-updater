@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import AuthGuard from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
+import PageHeader from '@/components/PageHeader';
 import { USD_TO_ZAR } from '@/lib/currency';
 
 interface AppUser {
@@ -153,6 +154,11 @@ function AdminContent() {
       <NavHeader />
 
       <main className="max-w-4xl mx-auto px-6 py-6 space-y-6">
+        <PageHeader
+          title="Admin"
+          description="Manage who has access to this tool and monitor AI spend. Add new users, review API token usage by day/month/all-time, and see per-file cost breakdowns for shift parses."
+        />
+
         {/* Add User Form */}
         <div className="bg-white rounded-lg border border-slate-200 p-6">
           <h2 className="text-sm font-medium text-slate-700 mb-4">Add New User</h2>

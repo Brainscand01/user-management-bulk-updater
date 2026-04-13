@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
+import PageHeader from '@/components/PageHeader';
 import FileUploader from '@/components/FileUploader';
 import DataPreview from '@/components/DataPreview';
 import SubmitProgress, { RowStatus } from '@/components/SubmitProgress';
@@ -226,6 +227,11 @@ function DashboardContent() {
       <NavHeader />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+        <PageHeader
+          title="Bulk User Operations"
+          description="Upload an Excel file to create, update, or change shifts for multiple Portelo users in one go. Choose an operation, drop in the file, review validation, then submit — results are tracked per row with full retry visibility."
+        />
+
         {/* Tabs */}
         <div className="flex gap-1 bg-slate-200 p-1 rounded-lg w-fit">
           {tabs.map(tab => (

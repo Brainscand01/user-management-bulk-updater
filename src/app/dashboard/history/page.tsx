@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import AuthGuard from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
+import PageHeader from '@/components/PageHeader';
 import { createClient } from '@/lib/supabase';
 
 interface Batch {
@@ -127,6 +128,11 @@ function HistoryContent() {
       <NavHeader />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+        <PageHeader
+          title="Audit Log"
+          description="Full history of every bulk upload batch. Click a batch to see per-row results, filter successes vs failures, and export the filtered view for correction and re-upload."
+        />
+
         {/* Batch List */}
         <div className="bg-white rounded-lg border border-slate-200 p-6">
           <h2 className="text-sm font-medium text-slate-700 mb-4">Processing History</h2>

@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
+import PageHeader from '@/components/PageHeader';
 import FileUploader from '@/components/FileUploader';
 import { extractSheetData, identifyScheduleSheets, SheetData } from '@/lib/shift-extractor';
 import * as XLSX from 'xlsx';
@@ -352,6 +353,11 @@ function ShiftsContent() {
       <NavHeader />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+        <PageHeader
+          title="AI Shift Parser"
+          description="Upload any workforce planner Excel file and Claude will extract a clean list of agent shifts — detecting the format, normalizing times to SAST, and flagging anything uncertain for review. Supports multi-sheet workbooks with different layouts."
+        />
+
         {/* Upload */}
         <div className="bg-white rounded-lg border border-slate-200 p-6">
           <h2 className="text-sm font-medium text-slate-700 mb-3">

@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import AuthGuard from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
+import PageHeader from '@/components/PageHeader';
 import { createClient } from '@/lib/supabase';
 import { USD_TO_ZAR } from '@/lib/currency';
 import * as XLSX from 'xlsx';
@@ -180,7 +181,10 @@ function ShiftHistoryContent() {
       <NavHeader />
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
-        <h1 className="text-lg font-bold text-slate-900">Shift Parse History</h1>
+        <PageHeader
+          title="Shift Parse History"
+          description="Every AI shift parse you've run — when it was uploaded, who ran it, what it cost, and how many entries needed review. Open a parse to drill into its individual shifts, filter by status, and export."
+        />
 
         {/* Parse list */}
         <div className="bg-white rounded-lg border border-slate-200 p-6">
