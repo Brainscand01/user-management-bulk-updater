@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import { logAuditClient } from '@/lib/audit-client';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,9 +21,24 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
+      logAuditClient({
+        actorEmail: email,
+        action: 'login.failure',
+        entityType: 'user',
+        entityId: email,
+        summary: `Failed login: ${error.message}`,
+        metadata: { reason: error.message },
+      });
       setError(error.message);
       setLoading(false);
     } else {
+      logAuditClient({
+        actorEmail: email,
+        action: 'login.success',
+        entityType: 'user',
+        entityId: email,
+        summary: `Signed in`,
+      });
       router.replace('/dashboard');
     }
   }

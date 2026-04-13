@@ -14,6 +14,7 @@ import {
   checkDuplicateADs, ValidationResult
 } from '@/lib/validation';
 import { downloadTemplate } from '@/lib/template-download';
+import { logAuditClient } from '@/lib/audit-client';
 
 type Tab = 'create' | 'update' | 'shift_update';
 
@@ -192,6 +193,21 @@ function DashboardContent() {
         completed_at: new Date().toISOString(),
       }).eq('id', batchId);
     }
+
+    logAuditClient({
+      actorEmail: user.email || null,
+      action: `batch.${parseResults.operation}`,
+      entityType: 'batch',
+      entityId: batchId || null,
+      summary: `${parseResults.operation} batch on ${fileName} — ${successCount} ok, ${failCount} failed`,
+      metadata: {
+        fileName,
+        operation: parseResults.operation,
+        totalRecords: validRows.length,
+        successful: successCount,
+        failed: failCount,
+      },
+    });
 
     setIsSubmitting(false);
   };

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { logAudit } from '@/lib/audit';
 
 export const maxDuration = 60;
 
@@ -89,6 +90,25 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Entry save failed: ${error.message}`, parseId }, { status: 500 });
       }
     }
+
+    await logAudit({
+      actorEmail: userEmail,
+      action: 'shift.parse',
+      entityType: 'shift_parse',
+      entityId: parseId,
+      summary: `Parsed ${fileName} — ${allEntries.length} entries, ${uniqueAgents} agents (${needsReview} need review)`,
+      metadata: {
+        fileName,
+        sheetsProcessed: results.length,
+        sheetsSkipped,
+        totalEntries: allEntries.length,
+        uniqueAgents,
+        needsReview,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        costUsd: totalCost,
+      },
+    }, request);
 
     return NextResponse.json({
       parseId,

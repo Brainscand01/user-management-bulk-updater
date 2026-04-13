@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { logAudit } from '@/lib/audit';
 
 // params is a Promise in this Next.js version; must be awaited
 type Ctx = { params: Promise<{ id: string }> };
@@ -40,6 +41,13 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
   }
 
+  // Read "before" for audit diff
+  const { data: before } = await supabase
+    .from('um_shift_parse_entries')
+    .select('*')
+    .eq('id', id)
+    .single();
+
   const { data, error } = await supabase
     .from('um_shift_parse_entries')
     .update(patch)
@@ -51,15 +59,32 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const actorEmail = request.headers.get('x-actor-email');
+  await logAudit({
+    actorEmail,
+    action: 'shift.entry.edit',
+    entityType: 'shift_entry',
+    entityId: id,
+    summary: `Edited shift entry for ${(data?.agent_name as string) || (before?.agent_name as string) || 'unknown'}`,
+    metadata: { before, after: data, changed: patch },
+  }, request);
+
   return NextResponse.json({ entry: data });
 }
 
-export async function DELETE(_request: NextRequest, { params }: Ctx) {
+export async function DELETE(request: NextRequest, { params }: Ctx) {
   const supabase = sb();
   if (!supabase) {
     return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
   }
   const { id } = await params;
+
+  const { data: before } = await supabase
+    .from('um_shift_parse_entries')
+    .select('*')
+    .eq('id', id)
+    .single();
+
   const { error } = await supabase
     .from('um_shift_parse_entries')
     .delete()
@@ -68,5 +93,16 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  const actorEmail = request.headers.get('x-actor-email');
+  await logAudit({
+    actorEmail,
+    action: 'shift.entry.delete',
+    entityType: 'shift_entry',
+    entityId: id,
+    summary: `Deleted shift entry for ${(before?.agent_name as string) || 'unknown'}`,
+    metadata: { deleted: before },
+  }, request);
+
   return NextResponse.json({ ok: true });
 }

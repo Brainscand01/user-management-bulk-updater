@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import AuthGuard from '@/components/AuthGuard';
+import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import PageHeader from '@/components/PageHeader';
 import { createClient } from '@/lib/supabase';
@@ -41,6 +41,7 @@ interface ShiftEntry {
 type EntryFilter = 'all' | 'working' | 'needs-review' | 'no-ad';
 
 function ShiftHistoryContent() {
+  const user = useCurrentUser();
   const [parses, setParses] = useState<ShiftParse[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedParse, setSelectedParse] = useState<string | null>(null);
@@ -183,7 +184,10 @@ function ShiftHistoryContent() {
     try {
       const res = await fetch(`/api/shifts/entries/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-actor-email': user?.email || '',
+        },
         body: JSON.stringify(editDraft),
       });
       const data = await res.json();
@@ -205,7 +209,10 @@ function ShiftHistoryContent() {
   async function deleteEntry(id: string) {
     if (!confirm('Delete this shift entry? This cannot be undone.')) return;
     try {
-      const res = await fetch(`/api/shifts/entries/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/shifts/entries/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-actor-email': user?.email || '' },
+      });
       if (!res.ok) {
         const data = await res.json();
         alert(`Delete failed: ${data.error || 'unknown error'}`);

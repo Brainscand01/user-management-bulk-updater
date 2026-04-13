@@ -5,6 +5,7 @@ import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import PageHeader from '@/components/PageHeader';
 import FileUploader from '@/components/FileUploader';
+import ShiftFileQueue from '@/components/ShiftFileQueue';
 import { extractSheetData, identifyScheduleSheets, SheetData } from '@/lib/shift-extractor';
 import * as XLSX from 'xlsx';
 import { USD_TO_ZAR } from '@/lib/currency';
@@ -368,6 +369,9 @@ function ShiftsContent() {
           </p>
           <FileUploader onFileLoaded={handleFileLoaded} />
         </div>
+
+        {/* Multi-file queue */}
+        <ShiftFileQueue userEmail={user?.email} />
 
         {/* Sheet Selection */}
         {sheets.length > 0 && !parseResult && (

@@ -129,8 +129,8 @@ function HistoryContent() {
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         <PageHeader
-          title="Audit Log"
-          description="Full history of every bulk upload batch. Click a batch to see per-row results, filter successes vs failures, and export the filtered view for correction and re-upload."
+          title="Upload History"
+          description="Full history of every bulk upload batch (Create / Update / Shift Update). Click a batch to see per-row results, filter successes vs failures, and export the filtered view for correction and re-upload."
         />
 
         {/* Batch List */}
