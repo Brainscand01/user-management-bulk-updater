@@ -149,7 +149,7 @@ function AdminContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 pl-60">
       <NavHeader />
 
       <main className="max-w-4xl mx-auto px-6 py-6 space-y-6">

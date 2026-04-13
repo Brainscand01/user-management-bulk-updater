@@ -53,6 +53,13 @@ CRITICAL RULES:
 9. Agent names may be "First Last", "Last, First", or "Full Name - AD - ID". Normalize to "First Last" format
 10. If a sheet has IN/OFF pattern with separate SA Start/SA End columns, use those time columns for the actual shift times on "IN" days
 11. Date: if actual dates are shown in headers, use them (YYYY-MM-DD). If only day names, use the week commencing date from context
+12. AM/PM DISAMBIGUATION — VERY IMPORTANT:
+    - Source times may appear as "4:00 - 1:00", "5:00 - 2:00" etc. with NO AM/PM marker
+    - A plausible BPO shift is 6-12 hours long. A 4am-to-1am shift would be 21 hours — that's almost certainly 16:00-01:00
+    - If the naive 24h reading gives a duration > 14 hours or < 4 hours, the start is very likely PM: add 12 to the start hour (4:00 → 16:00, 5:00 → 17:00, 6:00 → 18:00)
+    - If times cross midnight (end < start numerically), that's fine — e.g., "17:00 - 02:00" is a valid 9-hour evening shift
+    - Most SA agents supporting US clients work evening/overnight shifts (14:00-02:00, 16:00-01:00, 17:00-02:00 are very common). Default to PM interpretation when ambiguous start times are between 1:00 and 9:00 AND end times suggest the shift crosses into early morning
+    - When you make a PM adjustment, set confidence to "medium" and add a note like "AM/PM inferred from shift length"
 
 EXACT OUTPUT FORMAT - you MUST use these exact values:
 - day: MUST be one of exactly: "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" (full names, not abbreviations)
@@ -79,6 +86,64 @@ function normalizeDayName(day: string): string {
   if (!day) return '';
   const mapped = DAY_MAP[day.toLowerCase().trim()];
   return mapped || day;
+}
+
+// Convert "HH:MM" to minutes since midnight, or null if invalid
+function timeToMinutes(t: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t || '');
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  if (h > 23 || mm > 59) return null;
+  return h * 60 + mm;
+}
+
+function minutesToTime(mins: number): string {
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// Compute shift duration in minutes, handling overnight (end < start means wraps midnight)
+function shiftDuration(startMin: number, endMin: number): number {
+  return endMin >= startMin ? endMin - startMin : (1440 - startMin) + endMin;
+}
+
+// If a shift duration is implausibly long (>14h) or short (<2h), try adjusting
+// the start time by adding 12h (AM→PM). Returns adjusted entry with confidence
+// bumped to medium and a note. Leaves entry unchanged if adjustment doesn't help.
+function sanityCheckShiftTimes(e: ParsedShiftEntry): ParsedShiftEntry {
+  if (e.status !== 'working') return e;
+  const startMin = timeToMinutes(e.startTime);
+  const endMin = timeToMinutes(e.endTime);
+  if (startMin === null || endMin === null) return e;
+
+  const duration = shiftDuration(startMin, endMin);
+  const durationHours = duration / 60;
+
+  // Plausible shift: 2-14 hours. Outside that, try AM→PM flip on start
+  if (durationHours >= 2 && durationHours <= 14) return e;
+
+  // Try adding 12h to start (AM → PM)
+  const flippedStart = (startMin + 12 * 60) % 1440;
+  const flippedDuration = shiftDuration(flippedStart, endMin) / 60;
+
+  if (flippedDuration >= 2 && flippedDuration <= 14) {
+    const existingNote = e.notes ? `${e.notes}; ` : '';
+    return {
+      ...e,
+      startTime: minutesToTime(flippedStart),
+      confidence: e.confidence === 'high' ? 'medium' : e.confidence,
+      notes: `${existingNote}Start time adjusted from ${e.startTime} to ${minutesToTime(flippedStart)} (original duration ${durationHours.toFixed(1)}h implausible)`,
+    };
+  }
+
+  // Neither works — flag for review, keep original
+  return {
+    ...e,
+    confidence: 'low',
+    notes: e.notes ? `${e.notes}; Implausible duration ${durationHours.toFixed(1)}h` : `Implausible duration ${durationHours.toFixed(1)}h`,
+  };
 }
 
 function buildSheetPrompt(sheet: SheetPayload, fileName: string): string {
@@ -263,7 +328,9 @@ export async function POST(request: NextRequest) {
             // Default status to working if has times
             status: e.status || (e.startTime ? 'working' : 'off'),
           }))
-          .filter(e => e.agentName && e.day && e.startTime);
+          .filter(e => e.agentName && e.day && e.startTime)
+          // Run server-side sanity check on shift durations
+          .map(e => sanityCheckShiftTimes(e as ParsedShiftEntry));
 
         results.push({
           sheetName: sheet.sheetName,
