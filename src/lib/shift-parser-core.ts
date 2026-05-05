@@ -295,10 +295,11 @@ async function callWithRetry(
     try {
       const response = await client.messages.create({
         model: HAIKU_MODEL,
-        // 32k output cap so big sheets (100+ agents × 5 days = 500+ entries
-        // ≈ 25k output tokens) don't get truncated. Haiku 4.5 supports
-        // up to 64k output but anything past 32k is rarely useful here.
-        max_tokens: 32_000,
+        // Anthropic's non-streaming API rejects max_tokens above ~16k for
+        // Haiku 4.5 (HTTP 400 'max_tokens too large for non-streaming
+        // requests'). Keep at 16384; truncated sheets get re-flagged for
+        // chunked re-parsing in a follow-up pass.
+        max_tokens: 16_384,
         // Mark the system prompt as cacheable. Anthropic returns a cache hit
         // on subsequent calls within ~5 min that share the same prefix
         // (~2k tokens of static instructions => ~50-60% cost cut).
@@ -434,6 +435,9 @@ export async function parseSheetWithAI(
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
+    // Surface in Vercel logs so we don't have to inspect 'sheets_skipped'
+    // counts to discover that every call is throwing.
+    console.error(`[parseSheetWithAI] sheet="${sheet.sheetName}" file="${fileName}" — ${msg}`);
     return {
       result: { sheetName: sheet.sheetName, entries: [], skippedReason: `Parse error: ${msg}` },
       usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
