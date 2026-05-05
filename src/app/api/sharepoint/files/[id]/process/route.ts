@@ -49,16 +49,35 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       return NextResponse.json({ error: 'File is already being processed' }, { status: 409 });
     }
 
+    // Helper to write progress without blocking (best-effort)
+    const setProgress = async (
+      step: string,
+      extra: Partial<{ current: number; total: number; label: string }> = {}
+    ) => {
+      await supabase
+        .from('um_sharepoint_files')
+        .update({
+          progress: { step, updated_at: new Date().toISOString(), ...extra },
+        })
+        .eq('id', id);
+    };
+
     await supabase
       .from('um_sharepoint_files')
-      .update({ status: 'parsing', error_message: null })
+      .update({
+        status: 'parsing',
+        error_message: null,
+        progress: { step: 'starting', updated_at: new Date().toISOString() },
+      })
       .eq('id', id);
 
     try {
       // 1. Download from SharePoint
+      await setProgress('downloading', { label: 'Downloading from SharePoint' });
       const buffer = await downloadFile(row.drive_id, row.graph_file_id);
 
       // 2. Extract sheets, prefer schedule-like ones
+      await setProgress('extracting', { label: 'Reading Excel sheets' });
       const allSheets = extractSheetData(buffer);
       const scheduleSheets = identifyScheduleSheets(allSheets);
       const sheetsToParse = scheduleSheets.length > 0 ? scheduleSheets : allSheets;
@@ -71,6 +90,11 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       let totalCost = 0;
 
       for (let i = 0; i < sheetsToParse.length; i++) {
+        await setProgress('parsing_sheet', {
+          current: i + 1,
+          total: sheetsToParse.length,
+          label: sheetsToParse[i].sheetName,
+        });
         const { result, usage } = await parseSheetWithAI(
           client,
           sheetsToParse[i],
@@ -88,6 +112,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       }
 
       // 4. Save aggregate to um_shift_parses + entries
+      await setProgress('finalizing', { label: 'Saving entries' });
       const fin = await finalizeShifts(
         supabase,
         row.name,
@@ -104,6 +129,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
           parse_id: fin.parseId,
           parsed_at: new Date().toISOString(),
           error_message: null,
+          progress: { step: 'done', updated_at: new Date().toISOString() },
         })
         .eq('id', id);
 
@@ -137,7 +163,11 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       await supabase
         .from('um_sharepoint_files')
-        .update({ status: 'failed', error_message: message })
+        .update({
+          status: 'failed',
+          error_message: message,
+          progress: { step: 'failed', label: message.slice(0, 200), updated_at: new Date().toISOString() },
+        })
         .eq('id', id);
 
       await logAudit({

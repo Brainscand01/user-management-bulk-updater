@@ -7,6 +7,14 @@ import PageHeader from '@/components/PageHeader';
 import { createClient } from '@/lib/supabase';
 import Link from 'next/link';
 
+interface ParseProgress {
+  step: 'starting' | 'downloading' | 'extracting' | 'parsing_sheet' | 'finalizing' | 'done' | 'failed';
+  current?: number;
+  total?: number;
+  label?: string;
+  updated_at?: string;
+}
+
 interface SharePointFile {
   id: string;
   graph_file_id: string;
@@ -21,6 +29,7 @@ interface SharePointFile {
   parsed_at: string | null;
   moved_at: string | null;
   submitted_at: string | null;
+  progress: ParseProgress | null;
 }
 
 type StatusFilter = 'all' | 'pending' | 'parsed' | 'failed' | 'done';
@@ -65,6 +74,14 @@ function SharePointContent() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Live progress polling: refresh every 2s while ANY file is in flight
+  useEffect(() => {
+    const inFlight = files.some(f => f.status === 'parsing');
+    if (!inFlight) return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [files, load]);
 
   const filtered = useMemo(() => {
     let rows = files;
@@ -254,6 +271,49 @@ function SharePointContent() {
       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${map[s]}`}>
         {s}
       </span>
+    );
+  };
+
+  const stepLabel = (p: ParseProgress | null): string => {
+    if (!p) return '';
+    switch (p.step) {
+      case 'starting': return 'Starting…';
+      case 'downloading': return 'Downloading from SharePoint…';
+      case 'extracting': return 'Reading Excel sheets…';
+      case 'parsing_sheet':
+        return p.total
+          ? `Parsing sheet ${p.current}/${p.total}${p.label ? ` — ${p.label}` : ''}`
+          : 'Parsing…';
+      case 'finalizing': return 'Saving entries…';
+      case 'done': return 'Done';
+      case 'failed': return p.label ? `Failed: ${p.label}` : 'Failed';
+      default: return '';
+    }
+  };
+
+  const ProgressCell = ({ f }: { f: SharePointFile }) => {
+    if (f.status !== 'parsing' || !f.progress) return <span className="text-slate-400">—</span>;
+    const p = f.progress;
+    const pct =
+      p.step === 'parsing_sheet' && p.total
+        ? Math.round(((p.current || 0) / p.total) * 100)
+        : p.step === 'downloading' ? 10
+        : p.step === 'extracting' ? 25
+        : p.step === 'finalizing' ? 95
+        : p.step === 'starting' ? 5
+        : 0;
+    return (
+      <div className="flex flex-col gap-1 min-w-[220px]">
+        <div className="text-[11px] text-slate-700 truncate" title={stepLabel(p)}>
+          {stepLabel(p)}
+        </div>
+        <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+          <div
+            className="h-full transition-all duration-500"
+            style={{ width: `${pct}%`, backgroundColor: '#0D8A9E' }}
+          />
+        </div>
+      </div>
     );
   };
 
@@ -447,6 +507,7 @@ function SharePointContent() {
                     </th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Status</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">File</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600">Progress</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Folder</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Size</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Modified</th>
@@ -477,6 +538,7 @@ function SharePointContent() {
                             </div>
                           )}
                         </td>
+                        <td className="px-3 py-2"><ProgressCell f={f} /></td>
                         <td className="px-3 py-2 text-xs text-slate-500 max-w-[220px] truncate" title={f.folder_path || ''}>
                           {f.folder_path || '—'}
                         </td>
