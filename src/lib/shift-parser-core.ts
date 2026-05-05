@@ -11,13 +11,37 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// Haiku 4.5 list pricing (USD per 1M tokens) and cache modifiers:
+//   - cache write  = 1.25x base input price
+//   - cache read   = 0.10x base input price (90% off)
 export const HAIKU_INPUT_COST_PER_M = 1.0;
 export const HAIKU_OUTPUT_COST_PER_M = 5.0;
+export const HAIKU_CACHE_WRITE_MULT = 1.25;
+export const HAIKU_CACHE_READ_MULT = 0.10;
 export const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 
+/**
+ * Backwards-compatible cost calc for the simple uncached path.
+ * Prefer calculateCostWithCache when cache_creation/cache_read tokens
+ * are available from the API response.
+ */
 export function calculateCost(inputTokens: number, outputTokens: number): number {
   return (inputTokens / 1_000_000) * HAIKU_INPUT_COST_PER_M +
          (outputTokens / 1_000_000) * HAIKU_OUTPUT_COST_PER_M;
+}
+
+export function calculateCostWithCache(
+  uncachedInput: number,
+  cacheCreation: number,
+  cacheRead: number,
+  outputTokens: number,
+): number {
+  return (
+    (uncachedInput / 1_000_000) * HAIKU_INPUT_COST_PER_M +
+    (cacheCreation / 1_000_000) * HAIKU_INPUT_COST_PER_M * HAIKU_CACHE_WRITE_MULT +
+    (cacheRead / 1_000_000) * HAIKU_INPUT_COST_PER_M * HAIKU_CACHE_READ_MULT +
+    (outputTokens / 1_000_000) * HAIKU_OUTPUT_COST_PER_M
+  );
 }
 
 export interface SheetPayload {
@@ -169,7 +193,9 @@ Extract all agent shift assignments from this sheet. Return JSON matching the sc
 
 interface ApiCallResult {
   text: string;
-  inputTokens: number;
+  uncachedInputTokens: number;     // input tokens charged at full rate
+  cacheCreationTokens: number;     // input tokens written to cache (1.25x rate)
+  cacheReadTokens: number;         // input tokens served from cache (0.10x rate)
   outputTokens: number;
 }
 
@@ -183,16 +209,37 @@ async function callWithRetry(
       const response = await client.messages.create({
         model: HAIKU_MODEL,
         max_tokens: 16384,
-        system: SYSTEM_PROMPT,
+        // Mark the system prompt as cacheable. Anthropic returns a cache hit
+        // on subsequent calls within ~5 min that share the same prefix
+        // (~2k tokens of static instructions => ~50-60% cost cut).
+        system: [
+          {
+            type: 'text',
+            text: SYSTEM_PROMPT,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
       });
       const textBlock = response.content.find(b => b.type === 'text');
       if (!textBlock || textBlock.type !== 'text') throw new Error('No text in response');
+
+      // The SDK exposes cache token counts as cache_creation_input_tokens
+      // and cache_read_input_tokens on the usage object.
+      const usage = response.usage as {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      } | undefined;
+
       return {
         text: textBlock.text,
-        inputTokens: response.usage?.input_tokens || 0,
-        outputTokens: response.usage?.output_tokens || 0,
+        uncachedInputTokens: usage?.input_tokens || 0,
+        cacheCreationTokens: usage?.cache_creation_input_tokens || 0,
+        cacheReadTokens: usage?.cache_read_input_tokens || 0,
+        outputTokens: usage?.output_tokens || 0,
       };
     } catch (err) {
       const isRateLimit = err instanceof Anthropic.RateLimitError ||
@@ -246,13 +293,24 @@ export async function parseSheetWithAI(
     const apiResult = await callWithRetry(client, prompt);
     const parsed = parseJsonResponse(apiResult.text);
 
-    const cost = calculateCost(apiResult.inputTokens, apiResult.outputTokens);
+    const totalInput =
+      apiResult.uncachedInputTokens +
+      apiResult.cacheCreationTokens +
+      apiResult.cacheReadTokens;
+    const cost = calculateCostWithCache(
+      apiResult.uncachedInputTokens,
+      apiResult.cacheCreationTokens,
+      apiResult.cacheReadTokens,
+      apiResult.outputTokens,
+    );
     if (supabase) {
-      // Fire-and-forget usage log
+      // Fire-and-forget usage log — input_tokens stores the SUM (uncached +
+      // cache-create + cache-read) so historical reports stay coherent;
+      // detailed breakdown lives in metadata.
       supabase.from('um_api_usage').insert({
         file_name: fileName,
         sheet_name: sheet.sheetName,
-        input_tokens: apiResult.inputTokens,
+        input_tokens: totalInput,
         output_tokens: apiResult.outputTokens,
         cost_usd: cost,
         model: 'claude-haiku-4-5',
@@ -279,7 +337,7 @@ export async function parseSheetWithAI(
         skippedReason: parsed.skippedReason,
       },
       usage: {
-        inputTokens: apiResult.inputTokens,
+        inputTokens: totalInput,
         outputTokens: apiResult.outputTokens,
         costUsd: cost,
       },
