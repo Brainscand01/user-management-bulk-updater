@@ -99,11 +99,14 @@ function excelTimeToString(fraction: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-// Cap the number of schedule sheets we'll actually send to AI per file. A
-// 49-sheet workbook is almost always 5-10 real schedule sheets plus 30+
-// summary/template/lookup tabs. With streaming + 800s maxDuration we can
-// fit ~10 sheets per invocation; anything beyond that is the long tail.
-export const MAX_SCHEDULE_SHEETS_PER_FILE = 10;
+// Cap the number of schedule sheets we'll actually send to AI per file.
+// Empirically, big schedule sheets (100+ agents × 5 days) emit ~32k of
+// JSON output and take 120-180s each. Vercel Pro's 800s maxDuration
+// buys us ~4 of those before timeout. Files with more real schedule
+// sheets are gated by this cap; chunked multi-invocation is the
+// follow-up to lift it. Smaller-file campaigns (Brock, Best Cable)
+// have <=4 schedule sheets so this rarely matters.
+export const MAX_SCHEDULE_SHEETS_PER_FILE = 4;
 
 // Sheet names we never want to parse — extend as new patterns appear.
 const DENY_EXACT = new Set([

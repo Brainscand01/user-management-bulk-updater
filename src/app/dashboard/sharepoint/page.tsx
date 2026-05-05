@@ -91,13 +91,13 @@ function SharePointContent() {
   }, [files, busyIds, load]);
 
   // Stall detector: if a row has status='parsing' but progress.updated_at is
-  // older than 3 minutes, the serverless function almost certainly hit
-  // Vercel's maxDuration and was killed without writing 'failed'. Auto-reset
-  // those rows back to discovered so the user can retry. Runs whenever the
-  // files list changes, idempotent.
+  // older than 6 minutes, the serverless function almost certainly hit
+  // Vercel's maxDuration and was killed without writing 'failed'. (Single
+  // big schedule sheets now legitimately take 2-3 min in streaming mode,
+  // so 3 min was too tight.) Auto-reset back to failed.
   useEffect(() => {
     const now = Date.now();
-    const STALL_MS = 3 * 60 * 1000;
+    const STALL_MS = 6 * 60 * 1000;
     const stalled = files.filter(f => {
       if (f.status !== 'parsing') return false;
       const ts = f.progress?.updated_at ? new Date(f.progress.updated_at).getTime() : 0;
