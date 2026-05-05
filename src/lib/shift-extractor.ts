@@ -99,37 +99,88 @@ function excelTimeToString(fraction: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
+// Cap the number of schedule sheets we'll actually send to AI per file. A
+// 49-sheet workbook is almost always 5-10 real schedule sheets plus 30+
+// summary/template/lookup tabs. Going past this risks Vercel timeout.
+export const MAX_SCHEDULE_SHEETS_PER_FILE = 15;
+
+// Sheet names we never want to parse — extend as new patterns appear.
+const DENY_EXACT = new Set([
+  'summary', 'rota', 'rotas', 'breaks', 'break patterns', 'totals',
+  'raw interval data', 'old schedule model', 'leavers', 'special shifts',
+  'nsa', 'idp', 'team split', 'time', 'dailing slots for gb',
+  'base rotation', 'headcount', 'roster', 'roster summary', 'pivot',
+  'pivots', 'lookups', 'lookup', 'reference', 'references', 'template',
+  'templates', 'config', 'settings', 'meta', 'metadata', 'instructions',
+  'readme', 'notes', 'cover', 'cover page', 'index', 'toc', 'contents',
+  'team list', 'agent list', 'staff list', 'attendance', 'leave',
+  'absence', 'pto', 'wfh', 'kpi', 'kpis', 'targets', 'forecast',
+  'staffing', 'skills', 'skill matrix', 'rotations',
+]);
+
+const DENY_SUBSTRING = [
+  'summary', 'pivot', 'rotation', 'breaks', 'break ', 'lookup',
+  'template', 'headcount', 'roster summary', 'leave', 'attendance',
+  'forecast', 'staffing', 'kpi', 'old ',
+];
+
 /**
- * Determine which sheets are likely the main schedule sheets
- * (vs summary, rotation, breaks, etc.)
+ * Determine which sheets are likely the main schedule sheets and rank
+ * them so the most-likely candidates come first. Caller will typically
+ * limit to MAX_SCHEDULE_SHEETS_PER_FILE.
  */
 export function identifyScheduleSheets(sheets: SheetData[]): SheetData[] {
-  // Heuristics: schedule sheets have agent-level data
-  return sheets.filter(sheet => {
-    const name = sheet.sheetName.toLowerCase();
+  type Scored = { sheet: SheetData; score: number };
+  const scored: Scored[] = [];
 
-    // Definitely skip these
-    if (['summary', 'rota', 'breaks', 'break patterns', 'totals',
-         'raw interval data', 'old schedule model', 'leavers',
-         'special shifts', 'nsa', 'idp', 'team split', 'time',
-         'dailing slots for gb', 'base rotation'].includes(name)) {
-      return false;
-    }
+  for (const sheet of sheets) {
+    const name = sheet.sheetName.trim();
+    const nameLower = name.toLowerCase();
 
-    // Must have enough rows to contain agents (header + at least 2 agents)
-    if (sheet.totalRows < 4) return false;
+    // Hard-deny by exact match or substring
+    if (DENY_EXACT.has(nameLower)) continue;
+    if (DENY_SUBSTRING.some(s => nameLower.includes(s))) continue;
 
-    // Look for agent-like data: check if any row has what looks like names
+    // Sheets with default names like Sheet1, Sheet22 tend to be empties
+    // or scratch tabs. Allow only if they have substantial data.
+    const isDefaultName = /^sheet\d+$/i.test(name);
+    if (isDefaultName && sheet.totalRows < 15) continue;
+
+    // Need enough rows to plausibly hold a roster
+    if (sheet.totalRows < 4) continue;
+
+    // Score: prefer sheets with name-like cells, more rows, and meaningful names
+    let score = 0;
+    score += Math.min(sheet.totalRows, 100); // cap bonus from row count
+    if (sheet.totalCols > 8) score += 20;     // wider sheets often = days × agents
+    if (!isDefaultName) score += 30;           // named tabs beat Sheet1/Sheet9
+
+    // Sample first 20 rows for human-name hints
     const sample = sheet.rows.slice(0, 20);
-    const hasNameLikeData = sample.some(row =>
-      row.some(cell => {
-        if (typeof cell !== 'string') return false;
-        // Looks like a name: two+ words, first letter capitalized
-        return /^[A-Z][a-z]+ [A-Z][a-z]+/.test(cell) ||
-               /^[A-Z][a-z]+, [A-Z][a-z]+/.test(cell);
-      })
-    );
+    const nameHits = sample.reduce((acc, row) => {
+      for (const cell of row) {
+        if (typeof cell !== 'string') continue;
+        if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(cell) ||
+            /^[A-Z][a-z]+, [A-Z][a-z]+/.test(cell)) {
+          return acc + 1;
+        }
+      }
+      return acc;
+    }, 0);
+    score += nameHits * 5;
 
-    return hasNameLikeData || sheet.totalRows > 10;
-  });
+    // Tab name signals — boost actual schedule indicators
+    if (/(schedule|shift|wfm|roster|week|wc[\s_]?\d|w\d|w c)/i.test(name)) score += 25;
+
+    // Hard floor: must have either name-like data OR 12+ rows + non-default name
+    const passes = nameHits > 0 || (sheet.totalRows >= 12 && !isDefaultName);
+    if (!passes) continue;
+
+    scored.push({ sheet, score });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored
+    .slice(0, MAX_SCHEDULE_SHEETS_PER_FILE)
+    .map(s => s.sheet);
 }

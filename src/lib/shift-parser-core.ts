@@ -110,7 +110,94 @@ EXACT OUTPUT FORMAT - you MUST use these exact values:
 
 If a sheet is clearly not an agent schedule (summary, rotation template, break pattern), return: {"entries": [], "skippedReason": "reason here"}
 
-Return valid JSON only. No markdown code blocks. No explanation. Just the raw JSON object.`;
+Return valid JSON only. No markdown code blocks. No explanation. Just the raw JSON object.
+
+CONCRETE EXAMPLES (study these — they cover the formats you will see most often):
+
+Example 1 — vertical roster with agent names down column A and dates across the top:
+Input rows:
+  Row 0: Agent | Mon 2026-03-09 | Tue 2026-03-10 | Wed 2026-03-11 | Thu 2026-03-12 | Fri 2026-03-13
+  Row 1: SMoodl108 - Sarah Moodley | 16:00-01:00 | 16:00-01:00 | OFF | 16:00-01:00 | 16:00-01:00
+  Row 2: JJohns102 - John Johnson | 14:00-23:00 | 14:00-23:00 | 14:00-23:00 | OFF | OFF
+Expected output:
+  {"entries":[
+    {"agentName":"Sarah Moodley","ad":"SMoodl108","day":"Monday","date":"2026-03-09","startTime":"16:00","endTime":"01:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"Sarah Moodley","ad":"SMoodl108","day":"Tuesday","date":"2026-03-10","startTime":"16:00","endTime":"01:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"Sarah Moodley","ad":"SMoodl108","day":"Thursday","date":"2026-03-12","startTime":"16:00","endTime":"01:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"Sarah Moodley","ad":"SMoodl108","day":"Friday","date":"2026-03-13","startTime":"16:00","endTime":"01:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"John Johnson","ad":"JJohns102","day":"Monday","date":"2026-03-09","startTime":"14:00","endTime":"23:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"John Johnson","ad":"JJohns102","day":"Tuesday","date":"2026-03-10","startTime":"14:00","endTime":"23:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"John Johnson","ad":"JJohns102","day":"Wednesday","date":"2026-03-11","startTime":"14:00","endTime":"23:00","status":"working","confidence":"high","notes":""}
+  ]}
+Note: OFF days are entirely skipped (rule 6). AD usernames extracted from the "AD - Full Name" pattern (rule 8).
+
+Example 2 — IN/OFF marker with separate SA Start / SA End columns:
+Input rows:
+  Row 0: Name | AD | Mon | SA Start | SA End | Tue | SA Start | SA End | Wed | SA Start | SA End
+  Row 1: Mary Smith | MSmith201 | IN | 17:00 | 02:00 | IN | 17:00 | 02:00 | OFF | | |
+Expected output:
+  {"entries":[
+    {"agentName":"Mary Smith","ad":"MSmith201","day":"Monday","date":"","startTime":"17:00","endTime":"02:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"Mary Smith","ad":"MSmith201","day":"Tuesday","date":"","startTime":"17:00","endTime":"02:00","status":"working","confidence":"high","notes":""}
+  ]}
+Note: When IN appears, use the adjacent SA Start / SA End for the actual times (rule 10). OFF row skipped.
+
+Example 3 — US-time source with explicit SA Time column:
+Input rows:
+  Row 0: Agent | EST Start | EST End | SA Start | SA End | Day
+  Row 1: Robert Jones - eN1234567 | 09:00 | 18:00 | 16:00 | 01:00 | Monday
+Expected output:
+  {"entries":[
+    {"agentName":"Robert Jones","ad":"eN1234567","day":"Monday","date":"","startTime":"16:00","endTime":"01:00","status":"working","confidence":"high","notes":""}
+  ]}
+Note: Use the SA columns directly when present (rule 5).
+
+Example 4 — implausible AM/PM that needs flipping:
+Input rows:
+  Row 0: Agent | Monday | Tuesday | Wednesday
+  Row 1: Lerato Khumalo | 4:00 - 1:00 | 4:00 - 1:00 | OFF
+Expected output:
+  {"entries":[
+    {"agentName":"Lerato Khumalo","ad":"","day":"Monday","date":"","startTime":"16:00","endTime":"01:00","status":"working","confidence":"medium","notes":"Start time adjusted from 04:00 to 16:00 (original duration 21h implausible)"},
+    {"agentName":"Lerato Khumalo","ad":"","day":"Tuesday","date":"","startTime":"16:00","endTime":"01:00","status":"working","confidence":"medium","notes":"Start time adjusted from 04:00 to 16:00 (original duration 21h implausible)"}
+  ]}
+Note: 4am-to-1am is 21h — implausible. Start was AM-marked, almost certainly meant 16:00 (rule 12). AD is empty when not provided (rule 7).
+
+Example 5 — non-schedule sheet (skip):
+Input rows:
+  Row 0: Campaign | Required Heads | Forecast | Variance
+  Row 1: Aptive | 25 | 23 | -2
+  Row 2: Brock | 18 | 18 | 0
+Expected output:
+  {"entries":[],"skippedReason":"Headcount summary, not an agent schedule"}
+
+Example 6 — date in header but day name elsewhere:
+Input rows:
+  Row 0: | | Week commencing 2026-04-21 | | | |
+  Row 1: AD | Name | Mon | Tue | Wed | Thu | Fri
+  Row 2: APatel104 | Aisha Patel | 08:00-17:00 | 08:00-17:00 | 08:00-17:00 | 08:00-17:00 | OFF
+Expected output:
+  {"entries":[
+    {"agentName":"Aisha Patel","ad":"APatel104","day":"Monday","date":"2026-04-21","startTime":"08:00","endTime":"17:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"Aisha Patel","ad":"APatel104","day":"Tuesday","date":"2026-04-22","startTime":"08:00","endTime":"17:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"Aisha Patel","ad":"APatel104","day":"Wednesday","date":"2026-04-23","startTime":"08:00","endTime":"17:00","status":"working","confidence":"high","notes":""},
+    {"agentName":"Aisha Patel","ad":"APatel104","day":"Thursday","date":"2026-04-24","startTime":"08:00","endTime":"17:00","status":"working","confidence":"high","notes":""}
+  ]}
+Note: Week-commencing 2026-04-21 is Monday. Increment dates by day-of-week column position (rule 11).
+
+EDGE CASES TO HANDLE GRACEFULLY:
+- Cells with merged-cell artifacts (repeated values across multiple columns) — use position-based logic
+- Time written as "0900-1800" without colons → treat as 09:00-18:00
+- Time written as "9-6" (single digit) → assume PM end if range is unreasonably short, e.g. "9-6" likely means 09:00-18:00
+- Lower-case AD usernames (smoodl108) — preserve case as given by source
+- Names with hyphens, apostrophes, accents (O'Brien, Müller, Khumalo-Ngcobo) — keep them intact
+- Agent rows interspersed with blank or sub-header rows — skip blanks but keep parsing the rest
+- "WFH", "REMOTE", "OFFICE" markers next to times — ignore them, use the times
+- Multi-line shifts e.g. "08:00-13:00 / 14:00-19:00" → emit ONE working entry covering 08:00-19:00 with confidence=medium and notes mentioning the split
+- A row that's clearly a totals/subtotal row (Total, Subtotal, %, Σ, blank-name with numbers) → skip
+- Sheets that are mostly empty cells or headers only → return {"entries":[],"skippedReason":"insufficient data"}
+
+Always prefer extracting MORE entries with confidence=medium over silently dropping data. The reviewer can fix medium-confidence entries; they cannot recover entries that were never extracted.`;
 
 const DAY_MAP: Record<string, string> = {
   'mon': 'Monday', 'monday': 'Monday',
@@ -208,7 +295,10 @@ async function callWithRetry(
     try {
       const response = await client.messages.create({
         model: HAIKU_MODEL,
-        max_tokens: 16384,
+        // 32k output cap so big sheets (100+ agents × 5 days = 500+ entries
+        // ≈ 25k output tokens) don't get truncated. Haiku 4.5 supports
+        // up to 64k output but anything past 32k is rarely useful here.
+        max_tokens: 32_000,
         // Mark the system prompt as cacheable. Anthropic returns a cache hit
         // on subsequent calls within ~5 min that share the same prefix
         // (~2k tokens of static instructions => ~50-60% cost cut).

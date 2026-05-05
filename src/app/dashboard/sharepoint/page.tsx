@@ -88,6 +88,37 @@ function SharePointContent() {
     return () => clearInterval(t);
   }, [files, busyIds, load]);
 
+  // Stall detector: if a row has status='parsing' but progress.updated_at is
+  // older than 3 minutes, the serverless function almost certainly hit
+  // Vercel's maxDuration and was killed without writing 'failed'. Auto-reset
+  // those rows back to discovered so the user can retry. Runs whenever the
+  // files list changes, idempotent.
+  useEffect(() => {
+    const now = Date.now();
+    const STALL_MS = 3 * 60 * 1000;
+    const stalled = files.filter(f => {
+      if (f.status !== 'parsing') return false;
+      const ts = f.progress?.updated_at ? new Date(f.progress.updated_at).getTime() : 0;
+      return ts > 0 && (now - ts) > STALL_MS;
+    });
+    if (stalled.length === 0) return;
+
+    (async () => {
+      const supabase = createClient();
+      for (const f of stalled) {
+        await supabase
+          .from('um_sharepoint_files')
+          .update({
+            status: 'failed',
+            progress: { step: 'failed', label: 'Stalled — Vercel timeout', updated_at: new Date().toISOString() },
+            error_message: 'Auto-reset: parse stalled (Vercel function timeout). Click Retry.',
+          })
+          .eq('id', f.id);
+      }
+      load(true);
+    })();
+  }, [files, load]);
+
   const filtered = useMemo(() => {
     let rows = files;
     if (filter === 'pending') rows = rows.filter(f => f.status === 'discovered' || f.status === 'parsing');
