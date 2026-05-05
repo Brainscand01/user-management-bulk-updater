@@ -368,7 +368,7 @@ function ShiftHistoryContent() {
     <div className="min-h-screen bg-slate-50 pl-60">
       <NavHeader />
 
-      <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+      <main className="w-full px-6 py-6 space-y-6">
         <PageHeader
           title="Shift Parse History"
           description="Every AI shift parse you've run — when it was uploaded, who ran it, what it cost, and how many entries needed review. Open a parse to drill into its individual shifts, filter by status, and export."

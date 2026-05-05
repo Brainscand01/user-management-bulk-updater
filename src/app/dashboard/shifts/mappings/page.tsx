@@ -264,7 +264,7 @@ function MappingsContent() {
     <div className="min-h-screen bg-slate-50 pl-60">
       <NavHeader />
 
-      <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+      <main className="w-full px-6 py-6 space-y-6">
         <PageHeader
           title="Shift Mappings"
           description="Master shift list mirrored from Snowflake (DATAWAREHOUSE.MARKETIC_USERMANAGEMENTPROD_HEVO.AgentShiftTime). Used when submitting Shift Updates — the parser matches agent shift times against this table to find the correct Shift ID. Upload a CSV (Snowflake export or 3-column trimmed) to add or update entries; re-upload whenever the master list changes."

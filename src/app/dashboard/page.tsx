@@ -242,7 +242,7 @@ function DashboardContent() {
     <div className="min-h-screen bg-slate-50 pl-60">
       <NavHeader />
 
-      <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+      <main className="w-full px-6 py-6 space-y-6">
         <PageHeader
           title="Bulk User Operations"
           description="Upload an Excel file to create, update, or change shifts for multiple Portelo users in one go. Choose an operation, drop in the file, review validation, then submit — results are tracked per row with full retry visibility."

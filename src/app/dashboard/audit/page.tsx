@@ -113,7 +113,7 @@ function AuditContent() {
     <div className="min-h-screen bg-slate-50 pl-60">
       <NavHeader />
 
-      <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+      <main className="w-full px-6 py-6 space-y-6">
         <PageHeader
           title="Audit Log"
           description="Every privileged action across the app: logins, sign-outs, bulk batch submissions, shift parse runs, inline edits and deletes, template downloads, and mapping uploads. Filter by actor, action, or free text."

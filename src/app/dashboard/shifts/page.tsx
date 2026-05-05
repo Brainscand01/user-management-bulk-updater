@@ -355,7 +355,7 @@ function ShiftsContent() {
     <div className="min-h-screen bg-slate-50 pl-60">
       <NavHeader />
 
-      <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
+      <main className="w-full px-6 py-6 space-y-6">
         <PageHeader
           title="AI Shift Parser"
           description="Upload any workforce planner Excel file and Claude will extract a clean list of agent shifts — detecting the format, normalizing times to SAST, and flagging anything uncertain for review. Supports multi-sheet workbooks with different layouts."
