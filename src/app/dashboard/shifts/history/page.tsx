@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import PageHeader from '@/components/PageHeader';
+import { useDialog } from '@/components/Dialog';
 import { createClient } from '@/lib/supabase';
 import { USD_TO_ZAR } from '@/lib/currency';
 import * as XLSX from 'xlsx';
@@ -42,6 +43,7 @@ type EntryFilter = 'all' | 'working' | 'needs-review' | 'no-ad';
 
 function ShiftHistoryContent() {
   const user = useCurrentUser();
+  const dialog = useDialog();
   const [parses, setParses] = useState<ShiftParse[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedParse, setSelectedParse] = useState<string | null>(null);
@@ -194,7 +196,7 @@ function ShiftHistoryContent() {
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(`Save failed: ${data.error || 'unknown error'}`);
+        await dialog.alert({ title: 'Save failed', message: data.error || 'unknown error', variant: 'error' });
         setSaving(false);
         return;
       }
@@ -203,7 +205,7 @@ function ShiftHistoryContent() {
       setEditingId(null);
       setEditDraft({});
     } catch (err) {
-      alert(`Save failed: ${err instanceof Error ? err.message : 'network error'}`);
+      await dialog.alert({ title: 'Save failed', message: err instanceof Error ? err.message : 'network error', variant: 'error' });
     }
     setSaving(false);
   }
@@ -233,7 +235,7 @@ function ShiftHistoryContent() {
         .select('*')
         .in('parse_id', ids);
       if (error) {
-        alert(`Merge failed: ${error.message}`);
+        await dialog.alert({ title: 'Merge failed', message: error.message, variant: 'error' });
         setMerging(false);
         return;
       }
@@ -299,13 +301,19 @@ function ShiftHistoryContent() {
         XLSX.writeFile(wb, `${filename}.xlsx`);
       }
     } catch (err) {
-      alert(`Merge failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+      await dialog.alert({ title: 'Merge failed', message: err instanceof Error ? err.message : 'unknown error', variant: 'error' });
     }
     setMerging(false);
   }
 
   async function deleteEntry(id: string) {
-    if (!confirm('Delete this shift entry? This cannot be undone.')) return;
+    const ok = await dialog.confirm({
+      title: 'Delete this shift entry?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`/api/shifts/entries/${id}`, {
         method: 'DELETE',
@@ -313,12 +321,12 @@ function ShiftHistoryContent() {
       });
       if (!res.ok) {
         const data = await res.json();
-        alert(`Delete failed: ${data.error || 'unknown error'}`);
+        await dialog.alert({ title: 'Delete failed', message: data.error || 'unknown error', variant: 'error' });
         return;
       }
       setEntries(prev => prev.filter(e => e.id !== id));
     } catch (err) {
-      alert(`Delete failed: ${err instanceof Error ? err.message : 'network error'}`);
+      await dialog.alert({ title: 'Delete failed', message: err instanceof Error ? err.message : 'network error', variant: 'error' });
     }
   }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { useDialog } from '@/components/Dialog';
 
 interface FileUploaderProps {
   onFileLoaded?: (buffer: ArrayBuffer, fileName: string) => void;
@@ -10,6 +11,7 @@ interface FileUploaderProps {
 }
 
 export default function FileUploader({ onFileLoaded, onFilesLoaded, multiple = false, inputId = 'file-upload' }: FileUploaderProps) {
+  const dialog = useDialog();
   const [dragging, setDragging] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
 
@@ -27,7 +29,11 @@ export default function FileUploader({ onFileLoaded, onFilesLoaded, multiple = f
   const handleFiles = useCallback(async (files: File[]) => {
     const validFiles = files.filter(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'));
     if (validFiles.length === 0) {
-      alert('Please upload Excel files (.xlsx)');
+      await dialog.alert({
+        title: 'Wrong file type',
+        message: 'Please drop or pick Excel files (.xlsx).',
+        variant: 'error',
+      });
       return;
     }
 

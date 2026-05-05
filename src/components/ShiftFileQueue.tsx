@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useImperativeHandle, useState } from 'react';
 import FileUploader from '@/components/FileUploader';
+import { useDialog } from '@/components/Dialog';
 import { extractSheetData, identifyScheduleSheets, SheetData } from '@/lib/shift-extractor';
 import { USD_TO_ZAR } from '@/lib/currency';
 
@@ -65,6 +66,7 @@ const ShiftFileQueue = forwardRef<QueueAddHandle, ShiftFileQueueProps>(function 
   { userEmail },
   ref,
 ) {
+  const dialog = useDialog();
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -280,9 +282,15 @@ const ShiftFileQueue = forwardRef<QueueAddHandle, ShiftFileQueueProps>(function 
     setQueue(prev => prev.filter(q => q.status !== 'done' && q.status !== 'skipped' && q.status !== 'failed'));
   }
 
-  function clearAll() {
+  async function clearAll() {
     if (isProcessing) {
-      if (!confirm('Processing in progress — items already started will keep running. Clear queue anyway?')) return;
+      const ok = await dialog.confirm({
+        title: 'Clear queue while processing?',
+        message: 'Items already started will keep running in the background.',
+        confirmLabel: 'Clear queue',
+        variant: 'destructive',
+      });
+      if (!ok) return;
     }
     setQueue([]);
   }

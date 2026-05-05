@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { DialogProvider } from '@/components/Dialog';
 
 export interface SessionUser {
   email: string;
@@ -47,7 +48,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  return <>{children}</>;
+  return <DialogProvider>{children}</DialogProvider>;
 }
 
 export function useCurrentUser() {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import PageHeader from '@/components/PageHeader';
+import { useDialog } from '@/components/Dialog';
 import { createClient } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -48,6 +49,7 @@ function daysAgo(n: number): Date {
 
 function SharePointContent() {
   const user = useCurrentUser();
+  const dialog = useDialog();
   const [files, setFiles] = useState<SharePointFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -280,7 +282,12 @@ function SharePointContent() {
       setError('No selected files are in a parseable state (must be discovered or failed).');
       return;
     }
-    if (!confirm(`Parse ${targets.length} selected file(s)? Runs sequentially via Claude Haiku.`)) return;
+    const ok = await dialog.confirm({
+      title: `Parse ${targets.length} file${targets.length === 1 ? '' : 's'}?`,
+      message: `These will be sent to Claude Haiku one at a time. Average cost is roughly $0.05–$0.30 per file depending on sheet count.`,
+      confirmLabel: 'Parse',
+    });
+    if (!ok) return;
     setError(null);
     for (const f of targets) {
       await processFile(f.id);
@@ -294,7 +301,12 @@ function SharePointContent() {
       setError('No selected files are in a movable state (must be parsed or submitted).');
       return;
     }
-    if (!confirm(`Move ${targets.length} selected file(s) to /Processed/?`)) return;
+    const ok = await dialog.confirm({
+      title: `Move ${targets.length} file${targets.length === 1 ? '' : 's'} to /Processed/?`,
+      message: 'The source files will be relocated in SharePoint. Parse history is unaffected.',
+      confirmLabel: 'Move',
+    });
+    if (!ok) return;
     setError(null);
     for (const f of targets) {
       await moveFile(f.id);

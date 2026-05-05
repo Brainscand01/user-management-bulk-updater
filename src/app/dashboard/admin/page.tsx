@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import AuthGuard from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import PageHeader from '@/components/PageHeader';
+import { useDialog } from '@/components/Dialog';
 import { USD_TO_ZAR } from '@/lib/currency';
 
 interface AppUser {
@@ -39,6 +40,7 @@ interface UsageData {
 }
 
 function AdminContent() {
+  const dialog = useDialog();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -119,9 +121,13 @@ function AdminContent() {
   }
 
   async function handleDeleteUser(userId: string, email: string) {
-    if (!confirm(`Are you sure you want to delete ${email}? This cannot be undone.`)) {
-      return;
-    }
+    const ok = await dialog.confirm({
+      title: 'Delete user?',
+      message: `Are you sure you want to delete ${email}? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      variant: 'destructive',
+    });
+    if (!ok) return;
 
     try {
       const res = await fetch('/api/admin/users', {
@@ -132,12 +138,12 @@ function AdminContent() {
       const data = await res.json();
 
       if (data.error) {
-        alert(`Failed to delete: ${data.error}`);
+        await dialog.alert({ title: 'Failed to delete', message: data.error, variant: 'error' });
       } else {
         loadUsers();
       }
     } catch {
-      alert('Failed to delete user');
+      await dialog.alert({ title: 'Failed to delete', message: 'Network error.', variant: 'error' });
     }
   }
 

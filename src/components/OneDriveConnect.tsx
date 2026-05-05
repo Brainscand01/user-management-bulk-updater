@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useDialog } from '@/components/Dialog';
 
 interface DriveEntry {
   id: string;
@@ -35,6 +36,7 @@ interface Props {
 }
 
 export default function OneDriveConnect({ onFilesPulled }: Props) {
+  const dialog = useDialog();
   const [connected, setConnected] = useState<boolean | null>(null);
   const [accountName, setAccountName] = useState<string | null>(null);
   const [entries, setEntries] = useState<DriveEntry[]>([]);
@@ -171,7 +173,13 @@ export default function OneDriveConnect({ onFilesPulled }: Props) {
   }
 
   async function disconnect() {
-    if (!confirm('Disconnect OneDrive? You will need to reauthorize to pull files again.')) return;
+    const ok = await dialog.confirm({
+      title: 'Disconnect OneDrive?',
+      message: 'You will need to reauthorize to pull files again.',
+      confirmLabel: 'Disconnect',
+      variant: 'destructive',
+    });
+    if (!ok) return;
     await fetch('/api/onedrive/disconnect', { method: 'POST' });
     setConnected(false);
     setAccountName(null);

@@ -5,6 +5,7 @@ import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import PageHeader from '@/components/PageHeader';
 import FileUploader from '@/components/FileUploader';
+import { useDialog } from '@/components/Dialog';
 import DataPreview from '@/components/DataPreview';
 import SubmitProgress, { RowStatus } from '@/components/SubmitProgress';
 import { createClient } from '@/lib/supabase';
@@ -20,6 +21,7 @@ type Tab = 'create' | 'update' | 'shift_update';
 
 function DashboardContent() {
   const user = useCurrentUser();
+  const dialog = useDialog();
   const [activeTab, setActiveTab] = useState<Tab>('create');
   const [parseResults, setParseResults] = useState<ParseResult | null>(null);
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
@@ -41,7 +43,7 @@ function DashboardContent() {
     }
 
     if (!matched) {
-      alert('No valid data found in the uploaded file.');
+      dialog.alert({ title: 'No valid data', message: 'The uploaded file did not contain a recognizable Create / Update / Shift Update sheet.', variant: 'error' });
       return;
     }
 
@@ -71,7 +73,7 @@ function DashboardContent() {
       .filter(({ idx }) => validationResults[idx]?.valid && !duplicateADs.has(idx));
 
     if (validRows.length === 0) {
-      alert('No valid rows to submit.');
+      await dialog.alert({ title: 'Nothing to submit', message: 'No rows passed validation. Fix the errors flagged in the preview and try again.', variant: 'error' });
       return;
     }
 
