@@ -141,13 +141,23 @@ export async function POST(request: NextRequest, { params }: Ctx) {
           userEmail: actorEmail,
         }),
       });
-      const finData = await finRes.json();
+
+      const finText = await finRes.text();
+      let finData: { parseId?: string; totalEntries?: number; needsReview?: number; error?: unknown } = {};
+      try { finData = JSON.parse(finText); } catch { /* keep raw */ }
+
       if (!finRes.ok) {
-        throw new Error(`Finalize failed: ${finData.error || 'unknown'}`);
+        // Stringify the error properly — it might be a string, an object, or missing
+        let errMsg: string;
+        if (typeof finData.error === 'string') errMsg = finData.error;
+        else if (finData.error && typeof finData.error === 'object') errMsg = JSON.stringify(finData.error);
+        else if (finText) errMsg = finText.slice(0, 300);
+        else errMsg = `HTTP ${finRes.status}`;
+        throw new Error(`Finalize failed (${finRes.status}): ${errMsg}`);
       }
-      parseId = finData.parseId;
-      totalEntries = finData.totalEntries;
-      needsReview = finData.needsReview;
+      parseId = finData.parseId ?? null;
+      totalEntries = finData.totalEntries ?? 0;
+      needsReview = finData.needsReview ?? 0;
 
       // Update file row → parsed
       await supabase
