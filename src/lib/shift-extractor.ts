@@ -101,8 +101,9 @@ function excelTimeToString(fraction: number): string {
 
 // Cap the number of schedule sheets we'll actually send to AI per file. A
 // 49-sheet workbook is almost always 5-10 real schedule sheets plus 30+
-// summary/template/lookup tabs. Going past this risks Vercel timeout.
-export const MAX_SCHEDULE_SHEETS_PER_FILE = 15;
+// summary/template/lookup tabs. With streaming + 800s maxDuration we can
+// fit ~10 sheets per invocation; anything beyond that is the long tail.
+export const MAX_SCHEDULE_SHEETS_PER_FILE = 10;
 
 // Sheet names we never want to parse — extend as new patterns appear.
 const DENY_EXACT = new Set([

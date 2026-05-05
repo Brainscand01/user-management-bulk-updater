@@ -293,16 +293,13 @@ async function callWithRetry(
 ): Promise<ApiCallResult> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const response = await client.messages.create({
+      // STREAM the response. Anthropic's non-streaming endpoint caps
+      // max_tokens at ~16k for Haiku 4.5; on capped sheets the JSON gets
+      // truncated and we silently lose data. Streaming has no such cap so
+      // the model can emit the full 32k of agents on a big sheet.
+      const stream = client.messages.stream({
         model: HAIKU_MODEL,
-        // Anthropic's non-streaming API rejects max_tokens above ~16k for
-        // Haiku 4.5 (HTTP 400 'max_tokens too large for non-streaming
-        // requests'). Keep at 16384; truncated sheets get re-flagged for
-        // chunked re-parsing in a follow-up pass.
-        max_tokens: 16_384,
-        // Mark the system prompt as cacheable. Anthropic returns a cache hit
-        // on subsequent calls within ~5 min that share the same prefix
-        // (~2k tokens of static instructions => ~50-60% cost cut).
+        max_tokens: 32_000,
         system: [
           {
             type: 'text',
@@ -313,20 +310,28 @@ async function callWithRetry(
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
       });
-      const textBlock = response.content.find(b => b.type === 'text');
-      if (!textBlock || textBlock.type !== 'text') throw new Error('No text in response');
 
-      // The SDK exposes cache token counts as cache_creation_input_tokens
-      // and cache_read_input_tokens on the usage object.
-      const usage = response.usage as {
+      // SDK v0.87 doesn't expose a `.textStream` getter — iterate the
+      // raw event stream and accumulate text deltas ourselves.
+      let text = '';
+      for await (const event of stream) {
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          text += event.delta.text;
+        }
+      }
+      const finalMessage = await stream.finalMessage();
+
+      const usage = finalMessage.usage as {
         input_tokens?: number;
         output_tokens?: number;
         cache_creation_input_tokens?: number;
         cache_read_input_tokens?: number;
       } | undefined;
 
+      if (!text) throw new Error('Empty stream — no text emitted');
+
       return {
-        text: textBlock.text,
+        text,
         uncachedInputTokens: usage?.input_tokens || 0,
         cacheCreationTokens: usage?.cache_creation_input_tokens || 0,
         cacheReadTokens: usage?.cache_read_input_tokens || 0,

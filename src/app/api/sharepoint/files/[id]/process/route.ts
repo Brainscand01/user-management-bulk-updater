@@ -6,10 +6,11 @@ import { downloadFile } from '@/lib/sharepoint';
 import { extractSheetData, identifyScheduleSheets } from '@/lib/shift-extractor';
 import { parseSheetWithAI, finalizeShifts, type SheetResult } from '@/lib/shift-parser-core';
 
-// Up to 5 minutes per file (Vercel Pro). The route runs the full parse
-// pipeline in-process — no internal HTTP hops, so deployment-protection
-// 403s and double-billing are eliminated.
-export const maxDuration = 300;
+// 800s = Vercel Pro upper limit. With streaming each sheet now takes
+// 30-90s (no longer hitting the 16k truncation cap), so 800s allows
+// ~10 sheets per invocation comfortably. Files with more schedule sheets
+// than the cap are gated by MAX_SCHEDULE_SHEETS_PER_FILE.
+export const maxDuration = 800;
 
 type Ctx = { params: Promise<{ id: string }> };
 
