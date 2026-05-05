@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useRef, useState, useCallback, useMemo } from 'react';
 import AuthGuard, { useCurrentUser } from '@/components/AuthGuard';
 import NavHeader from '@/components/NavHeader';
 import PageHeader from '@/components/PageHeader';
 import FileUploader from '@/components/FileUploader';
-import ShiftFileQueue from '@/components/ShiftFileQueue';
+import ShiftFileQueue, { type QueueAddHandle } from '@/components/ShiftFileQueue';
+import OneDriveConnect, { type OneDrivePulledFile } from '@/components/OneDriveConnect';
 import { extractSheetData, identifyScheduleSheets, SheetData } from '@/lib/shift-extractor';
 import * as XLSX from 'xlsx';
 import { USD_TO_ZAR } from '@/lib/currency';
@@ -45,6 +46,7 @@ type FilterMode = 'all' | 'working' | 'off' | 'low-confidence' | 'no-ad';
 
 function ShiftsContent() {
   const user = useCurrentUser();
+  const queueRef = useRef<QueueAddHandle | null>(null);
   const [fileName, setFileName] = useState('');
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [scheduleSheets, setScheduleSheets] = useState<SheetData[]>([]);
@@ -370,8 +372,27 @@ function ShiftsContent() {
           <FileUploader onFileLoaded={handleFileLoaded} />
         </div>
 
+        {/* OneDrive connect + folder picker */}
+        <OneDriveConnect
+          onFilesPulled={(files: OneDrivePulledFile[]) => {
+            queueRef.current?.add(
+              files.map(f => ({
+                buffer: f.buffer,
+                name: f.name,
+                oneDrive: {
+                  driveId: f.driveId,
+                  itemId: f.itemId,
+                  eTag: f.eTag,
+                  size: f.size,
+                  lastModified: f.lastModified,
+                },
+              })),
+            );
+          }}
+        />
+
         {/* Multi-file queue */}
-        <ShiftFileQueue userEmail={user?.email} />
+        <ShiftFileQueue ref={queueRef} userEmail={user?.email} />
 
         {/* Sheet Selection */}
         {sheets.length > 0 && !parseResult && (

@@ -52,6 +52,8 @@ function ShiftHistoryContent() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<ShiftEntry>>({});
   const [saving, setSaving] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [merging, setMerging] = useState(false);
 
   useEffect(() => {
     loadParses();
@@ -206,6 +208,102 @@ function ShiftHistoryContent() {
     setSaving(false);
   }
 
+  function toggleSelect(parseId: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(parseId)) next.delete(parseId);
+      else next.add(parseId);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === parses.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(parses.map(p => p.id)));
+  }
+
+  async function mergeExport(format: 'xlsx' | 'csv') {
+    if (selectedIds.size === 0) return;
+    setMerging(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const supabase = createClient();
+      const { data: entryRows, error } = await supabase
+        .from('um_shift_parse_entries')
+        .select('*')
+        .in('parse_id', ids);
+      if (error) {
+        alert(`Merge failed: ${error.message}`);
+        setMerging(false);
+        return;
+      }
+
+      const fileByParse = new Map(parses.map(p => [p.id, p.file_name]));
+      const rows = (entryRows || []).map(e => ({
+        source_file: fileByParse.get(e.parse_id) || '',
+        agent_name: e.agent_name,
+        ad: e.ad || '',
+        day: e.day,
+        date: e.date || '',
+        start_time: e.start_time || '',
+        end_time: e.end_time || '',
+        status: e.status,
+        confidence: e.confidence,
+        sheet_name: e.sheet_name || '',
+        notes: e.notes || '',
+      }));
+
+      rows.sort((a, b) =>
+        a.source_file.localeCompare(b.source_file) ||
+        a.agent_name.localeCompare(b.agent_name) ||
+        (a.date || '').localeCompare(b.date || ''),
+      );
+
+      const header = [
+        'Source File', 'Agent Name', 'AD/Username', 'Day', 'Date',
+        'Start Time', 'End Time', 'Status', 'Confidence', 'Sheet', 'Notes',
+      ];
+      const stamp = new Date().toISOString().slice(0, 10);
+      const filename = `shifts_merged_${ids.length}files_${stamp}`;
+
+      if (format === 'csv') {
+        const csv = [
+          header.join(','),
+          ...rows.map(r =>
+            [r.source_file, r.agent_name, r.ad, r.day, r.date, r.start_time, r.end_time, r.status, r.confidence, r.sheet_name, r.notes]
+              .map(v => `"${String(v).replace(/"/g, '""')}"`).join(','),
+          ),
+        ].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${filename}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const aoa = [
+          header,
+          ...rows.map(r => [
+            r.source_file, r.agent_name, r.ad, r.day, r.date,
+            r.start_time, r.end_time, r.status, r.confidence, r.sheet_name, r.notes,
+          ]),
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws['!cols'] = [
+          { wch: 35 }, { wch: 25 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
+          { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 20 }, { wch: 30 },
+        ];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Merged Shifts');
+        XLSX.writeFile(wb, `${filename}.xlsx`);
+      }
+    } catch (err) {
+      alert(`Merge failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
+    setMerging(false);
+  }
+
   async function deleteEntry(id: string) {
     if (!confirm('Delete this shift entry? This cannot be undone.')) return;
     try {
@@ -278,7 +376,30 @@ function ShiftHistoryContent() {
 
         {/* Parse list */}
         <div className="bg-white rounded-lg border border-slate-200 p-6">
-          <h2 className="text-sm font-medium text-slate-700 mb-4">Past Uploads</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h2 className="text-sm font-medium text-slate-700">Past Uploads</h2>
+            {parses.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">
+                  {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select files to merge'}
+                </span>
+                <button
+                  onClick={() => mergeExport('xlsx')}
+                  disabled={selectedIds.size === 0 || merging}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 rounded-md hover:bg-green-100 transition-colors disabled:opacity-50"
+                >
+                  {merging ? 'Merging…' : `Merge & Export Excel`}
+                </button>
+                <button
+                  onClick={() => mergeExport('csv')}
+                  disabled={selectedIds.size === 0 || merging}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50"
+                >
+                  Merge & Export CSV
+                </button>
+              </div>
+            )}
+          </div>
 
           {loading ? (
             <div className="text-sm text-slate-500">Loading...</div>
@@ -289,6 +410,14 @@ function ShiftHistoryContent() {
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50">
+                    <th className="px-3 py-2 text-left font-medium text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.size === parses.length && parses.length > 0}
+                        onChange={toggleSelectAll}
+                        className="rounded border-slate-300"
+                      />
+                    </th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Date</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">File Name</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Agents</th>
@@ -305,6 +434,14 @@ function ShiftHistoryContent() {
                       key={p.id}
                       className={`border-t border-slate-100 hover:bg-slate-50 ${selectedParse === p.id ? 'bg-blue-50' : ''}`}
                     >
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={() => toggleSelect(p.id)}
+                          className="rounded border-slate-300"
+                        />
+                      </td>
                       <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{formatDate(p.created_at)}</td>
                       <td className="px-3 py-2 font-medium max-w-xs truncate" title={p.file_name}>{p.file_name}</td>
                       <td className="px-3 py-2 text-slate-600">{p.unique_agents}</td>

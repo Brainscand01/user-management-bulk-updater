@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,6 +30,13 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
         {children}
+        <Script
+          src="https://ignition-command-centre.vercel.app/sdk/ignition-monitor.js"
+          data-api-key={process.env.NEXT_PUBLIC_MONITOR_KEY}
+          data-endpoint="https://ignition-command-centre.vercel.app"
+          data-bug-reporter="true"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );

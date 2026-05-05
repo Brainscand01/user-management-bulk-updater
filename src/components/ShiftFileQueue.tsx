@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useState } from 'react';
 import FileUploader from '@/components/FileUploader';
 import { extractSheetData, identifyScheduleSheets, SheetData } from '@/lib/shift-extractor';
 import { USD_TO_ZAR } from '@/lib/currency';
@@ -25,6 +25,14 @@ interface SheetResult {
 
 type QueueStatus = 'queued' | 'extracting' | 'parsing' | 'finalizing' | 'done' | 'failed' | 'skipped';
 
+interface OneDriveSource {
+  driveId: string;
+  itemId: string;
+  eTag: string;
+  size: number;
+  lastModified: string;
+}
+
 interface QueueItem {
   id: string;
   fileName: string;
@@ -40,15 +48,23 @@ interface QueueItem {
   costUsd: number;
   parseId: string | null;
   errorMessage: string;
+  oneDrive?: OneDriveSource;
 }
 
 interface ShiftFileQueueProps {
   userEmail: string | undefined;
 }
 
+export interface QueueAddHandle {
+  add: (files: Array<{ buffer: ArrayBuffer; name: string; oneDrive?: OneDriveSource }>) => void;
+}
+
 let nextId = 0;
 
-export default function ShiftFileQueue({ userEmail }: ShiftFileQueueProps) {
+const ShiftFileQueue = forwardRef<QueueAddHandle, ShiftFileQueueProps>(function ShiftFileQueue(
+  { userEmail },
+  ref,
+) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -56,25 +72,41 @@ export default function ShiftFileQueue({ userEmail }: ShiftFileQueueProps) {
     setQueue(prev => prev.map(q => q.id === id ? { ...q, ...patch } : q));
   }, []);
 
-  const handleFilesLoaded = useCallback((files: { buffer: ArrayBuffer; name: string }[]) => {
-    const newItems: QueueItem[] = files.map(f => ({
-      id: `q-${++nextId}`,
-      fileName: f.name,
-      buffer: f.buffer,
-      status: 'queued',
-      totalSheets: 0,
-      selectedSheets: 0,
-      currentSheet: 0,
-      currentSheetName: '',
-      totalEntries: 0,
-      uniqueAgents: 0,
-      needsReview: 0,
-      costUsd: 0,
-      parseId: null,
-      errorMessage: '',
-    }));
-    setQueue(prev => [...prev, ...newItems]);
-  }, []);
+  const addToQueue = useCallback(
+    (files: Array<{ buffer: ArrayBuffer; name: string; oneDrive?: OneDriveSource }>) => {
+      setQueue(prev => {
+        const existingNames = new Set(prev.map(q => q.fileName));
+        const newItems: QueueItem[] = files
+          .filter(f => !existingNames.has(f.name))
+          .map(f => ({
+            id: `q-${++nextId}`,
+            fileName: f.name,
+            buffer: f.buffer,
+            status: 'queued',
+            totalSheets: 0,
+            selectedSheets: 0,
+            currentSheet: 0,
+            currentSheetName: '',
+            totalEntries: 0,
+            uniqueAgents: 0,
+            needsReview: 0,
+            costUsd: 0,
+            parseId: null,
+            errorMessage: '',
+            oneDrive: f.oneDrive,
+          }));
+        return [...prev, ...newItems];
+      });
+    },
+    [],
+  );
+
+  useImperativeHandle(ref, () => ({ add: addToQueue }), [addToQueue]);
+
+  const handleFilesLoaded = useCallback(
+    (files: { buffer: ArrayBuffer; name: string }[]) => addToQueue(files),
+    [addToQueue],
+  );
 
   async function processItem(item: QueueItem): Promise<void> {
     // 1. Extract sheets locally
@@ -205,6 +237,27 @@ export default function ShiftFileQueue({ userEmail }: ShiftFileQueueProps) {
       parseId,
       errorMessage: failedSheets > 0 ? `${failedSheets} sheet(s) failed` : '',
     });
+
+    // Record dedup so we don't pull this same (drive, item, etag) again.
+    if (item.oneDrive && parseId) {
+      try {
+        await fetch('/api/onedrive/record', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            driveId: item.oneDrive.driveId,
+            itemId: item.oneDrive.itemId,
+            etag: item.oneDrive.eTag,
+            fileName: item.fileName,
+            sizeBytes: item.oneDrive.size,
+            lastModified: item.oneDrive.lastModified,
+            parseId,
+          }),
+        });
+      } catch {
+        // non-fatal — worst case is we re-download next browse
+      }
+    }
   }
 
   const startProcessing = useCallback(async () => {
@@ -390,7 +443,9 @@ export default function ShiftFileQueue({ userEmail }: ShiftFileQueueProps) {
       )}
     </div>
   );
-}
+});
+
+export default ShiftFileQueue;
 
 function StatusBadge({ status }: { status: QueueStatus }) {
   const styles: Record<QueueStatus, { bg: string; text: string; label: string }> = {

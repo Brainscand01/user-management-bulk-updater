@@ -1,9 +1,7 @@
 'use client';
 
-import { useRouter, usePathname } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
+import { usePathname, useRouter } from 'next/navigation';
 import { useCurrentUser } from '@/components/AuthGuard';
-import { logAuditClient } from '@/lib/audit-client';
 
 interface NavItem {
   href: string;
@@ -94,17 +92,9 @@ export default function NavHeader() {
   const pathname = usePathname();
   const user = useCurrentUser();
 
-  const handleSignOut = async () => {
-    const supabase = createClient();
-    logAuditClient({
-      actorEmail: user?.email || null,
-      action: 'logout',
-      entityType: 'user',
-      entityId: user?.email || null,
-      summary: 'Signed out',
-    });
-    await supabase.auth.signOut();
-    router.replace('/login');
+  const handleSignOut = () => {
+    // Server route handles audit logging + cookie clear + Microsoft logout
+    window.location.href = '/api/auth/signout';
   };
 
   return (

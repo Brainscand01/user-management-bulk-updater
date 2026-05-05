@@ -2,35 +2,39 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
-import type { User } from '@supabase/supabase-js';
+
+export interface SessionUser {
+  email: string;
+  name?: string;
+  oid?: string;
+  tid?: string;
+}
+
+async function fetchSession(): Promise<SessionUser | null> {
+  try {
+    const res = await fetch('/api/auth/session', { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json() as { user: SessionUser | null };
+    return data.user;
+  } catch {
+    return null;
+  }
+}
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const supabase = createClient();
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user);
-      } else {
+    fetchSession().then(u => {
+      if (!u) {
         router.replace('/login');
+      } else {
+        setUser(u);
       }
       setLoading(false);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) {
-        router.replace('/login');
-      } else {
-        setUser(session.user);
-      }
-    });
-
-    return () => subscription.unsubscribe();
   }, [router]);
 
   if (loading) {
@@ -47,13 +51,10 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 export function useCurrentUser() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
 
   useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
+    fetchSession().then(setUser);
   }, []);
 
   return user;

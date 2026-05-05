@@ -1,39 +1,18 @@
 'use client';
 
-import { useState } from 'react';
-import { createClient } from '@/lib/supabase';
-import { logAuditClient } from '@/lib/audit-client';
+import { Suspense, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 
-export default function LoginPage() {
-  const [error, setError] = useState('');
+function LoginInner() {
   const [loading, setLoading] = useState(false);
+  const params = useSearchParams();
+  const next = params.get('next') || '/dashboard';
 
-  async function handleMicrosoftSignIn() {
-    setError('');
+  function handleSignIn() {
     setLoading(true);
-
-    const supabase = createClient();
-    const redirectTo = `${window.location.origin}/auth/callback`;
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'azure',
-      options: {
-        scopes: 'openid profile email',
-        redirectTo,
-      },
-    });
-
-    if (error) {
-      logAuditClient({
-        action: 'login.failure',
-        entityType: 'user',
-        summary: `Microsoft sign-in failed: ${error.message}`,
-        metadata: { reason: error.message, provider: 'azure' },
-      });
-      setError(error.message);
-      setLoading(false);
-    }
-    // On success, browser is redirected away — no further action here.
+    // Server-side redirect — let the route handler build the authorize URL,
+    // set the state cookie, and bounce to Microsoft.
+    window.location.href = `/api/auth/microsoft?next=${encodeURIComponent(next)}`;
   }
 
   return (
@@ -51,7 +30,7 @@ export default function LoginPage() {
         </div>
 
         <button
-          onClick={handleMicrosoftSignIn}
+          onClick={handleSignIn}
           disabled={loading}
           className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white border border-slate-300 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
@@ -68,16 +47,24 @@ export default function LoginPage() {
           {loading ? 'Redirecting…' : 'Sign in with Microsoft'}
         </button>
 
-        {error && (
-          <div className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 p-2 rounded">
-            {error}
-          </div>
-        )}
-
         <p className="mt-6 text-[11px] text-center text-slate-400">
           Authorized Ignition staff only · Powered by Microsoft Entra ID
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen bg-slate-50">
+          <div className="animate-spin h-10 w-10 border-4 border-blue-500 border-t-transparent rounded-full" />
+        </div>
+      }
+    >
+      <LoginInner />
+    </Suspense>
   );
 }
