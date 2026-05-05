@@ -75,13 +75,16 @@ function SharePointContent() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Live progress polling: refresh every 2s while ANY file is in flight
+  // Live progress polling: refresh every 2s while EITHER the DB shows a
+  // parsing row OR we have a local in-flight action (busyIds). The latter
+  // closes the chicken-and-egg gap: processFile awaits the full parse, so
+  // without busyIds the page wouldn't poll until the parse completed.
   useEffect(() => {
-    const inFlight = files.some(f => f.status === 'parsing');
+    const inFlight = busyIds.size > 0 || files.some(f => f.status === 'parsing');
     if (!inFlight) return;
     const t = setInterval(load, 2000);
     return () => clearInterval(t);
-  }, [files, load]);
+  }, [files, busyIds, load]);
 
   const filtered = useMemo(() => {
     let rows = files;
@@ -193,6 +196,13 @@ function SharePointContent() {
   async function processFile(id: string) {
     setBusy(id, true);
     setError(null);
+
+    // Pull the row state ~500ms after kickoff so the user sees status flip
+    // to 'parsing' and the first progress step before the long-running fetch
+    // resolves. Subsequent polling (every 2s) is driven by the busyIds-aware
+    // effect above.
+    const earlyRefresh = setTimeout(() => { load(); }, 500);
+
     try {
       const res = await fetch(`/api/sharepoint/files/${id}/process`, {
         method: 'POST',
@@ -207,6 +217,7 @@ function SharePointContent() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Parse failed');
     }
+    clearTimeout(earlyRefresh);
     setBusy(id, false);
   }
 
