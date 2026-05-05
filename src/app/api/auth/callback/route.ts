@@ -9,11 +9,34 @@ import { logAudit } from '@/lib/audit';
  * originally requested page.
  */
 export async function GET(request: NextRequest) {
+  try {
+    return await handleCallback(request);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Audit best-effort, but don't let a logging failure mask the real error
+    try {
+      await logAudit({
+        action: 'login.failure',
+        summary: `Callback threw: ${msg.slice(0, 200)}`,
+        metadata: { provider: 'azure', errorClass: err?.constructor?.name },
+      }, request);
+    } catch { /* swallow */ }
+    return errorPage(`Sign-in error: ${msg}`);
+  }
+}
+
+async function handleCallback(request: NextRequest) {
   const tenantId = process.env.MS_TENANT_ID;
   const clientId = process.env.MS_CLIENT_ID;
   const clientSecret = process.env.MS_CLIENT_SECRET;
   if (!tenantId || !clientId || !clientSecret) {
-    return errorPage('Microsoft auth not configured.');
+    return errorPage('Microsoft auth not configured (MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET missing).');
+  }
+  if (!process.env.AUTH_SECRET) {
+    return errorPage('AUTH_SECRET environment variable is missing in this deployment.');
+  }
+  if (process.env.AUTH_SECRET.length < 32) {
+    return errorPage('AUTH_SECRET must be at least 32 characters long.');
   }
 
   const url = new URL(request.url);
