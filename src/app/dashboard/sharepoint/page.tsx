@@ -344,7 +344,7 @@ function SharePointContent() {
     <div className="min-h-screen bg-slate-50 pl-60">
       <NavHeader />
 
-      <main className="max-w-[1800px] mx-auto px-6 py-6 space-y-6">
+      <main className="w-full px-6 py-6 space-y-6">
         <PageHeader
           title="SharePoint Sync"
           description="Pull workforce planner files from the CXWorkforceManagement SharePoint site, parse them with AI, review the output, and (after human cross-check) push the resulting shift assignments back to Portelo. Click 'Run Sync Now' to discover new files; click 'Parse' on a file to send it through Claude. Source files move to /Processed/ when you're done."
