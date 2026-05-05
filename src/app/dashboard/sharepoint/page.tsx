@@ -24,6 +24,18 @@ interface SharePointFile {
 }
 
 type StatusFilter = 'all' | 'pending' | 'parsed' | 'failed' | 'done';
+type DateFilter = 'all' | 'today' | '7d' | '30d' | 'custom';
+
+function startOfTodaySAST(): Date {
+  // SAST = UTC+2, but use local browser TZ for "today" intuition; users are SA-based
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+function daysAgo(n: number): Date {
+  const d = startOfTodaySAST();
+  d.setDate(d.getDate() - n);
+  return d;
+}
 
 function SharePointContent() {
   const user = useCurrentUser();
@@ -32,9 +44,13 @@ function SharePointContent() {
   const [syncing, setSyncing] = useState(false);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,6 +72,28 @@ function SharePointContent() {
     else if (filter === 'parsed') rows = rows.filter(f => f.status === 'parsed');
     else if (filter === 'failed') rows = rows.filter(f => f.status === 'failed');
     else if (filter === 'done') rows = rows.filter(f => f.status === 'moved' || f.status === 'submitted');
+
+    // Date filter — uses last_modified_at (SharePoint mtime), falls back to discovered_at
+    if (dateFilter !== 'all') {
+      let from: Date | null = null;
+      let to: Date | null = null;
+      if (dateFilter === 'today') from = startOfTodaySAST();
+      else if (dateFilter === '7d') from = daysAgo(7);
+      else if (dateFilter === '30d') from = daysAgo(30);
+      else if (dateFilter === 'custom') {
+        if (customFrom) from = new Date(customFrom + 'T00:00:00');
+        if (customTo) to = new Date(customTo + 'T23:59:59');
+      }
+      rows = rows.filter(f => {
+        const ts = f.last_modified_at || f.discovered_at;
+        if (!ts) return false;
+        const d = new Date(ts);
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      });
+    }
+
     if (search) {
       const t = search.toLowerCase();
       rows = rows.filter(f =>
@@ -64,7 +102,37 @@ function SharePointContent() {
       );
     }
     return rows;
-  }, [files, filter, search]);
+  }, [files, filter, dateFilter, customFrom, customTo, search]);
+
+  // Selection helpers — only operate on currently filtered rows
+  const filteredIds = useMemo(() => filtered.map(f => f.id), [filtered]);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every(id => selected.has(id));
+  const someFilteredSelected = filteredIds.some(id => selected.has(id)) && !allFilteredSelected;
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  const toggleAllFiltered = useCallback(() => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const id of filteredIds) next.delete(id);
+      } else {
+        for (const id of filteredIds) next.add(id);
+      }
+      return next;
+    });
+  }, [allFilteredSelected, filteredIds]);
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const selectedFiles = useMemo(
+    () => files.filter(f => selected.has(f.id)),
+    [files, selected]
+  );
 
   const counts = useMemo(() => ({
     total: files.length,
@@ -145,14 +213,32 @@ function SharePointContent() {
     setBusy(id, false);
   }
 
-  async function processAllPending() {
-    const pending = files.filter(f => f.status === 'discovered');
-    if (pending.length === 0) return;
-    if (!confirm(`Parse ${pending.length} pending file(s)? This will run them sequentially via Claude Haiku.`)) return;
-    for (const f of pending) {
-      // Refresh row from server before processing in case state has shifted
+  async function parseSelected() {
+    const targets = selectedFiles.filter(f => f.status === 'discovered' || f.status === 'failed');
+    if (targets.length === 0) {
+      setError('No selected files are in a parseable state (must be discovered or failed).');
+      return;
+    }
+    if (!confirm(`Parse ${targets.length} selected file(s)? Runs sequentially via Claude Haiku.`)) return;
+    setError(null);
+    for (const f of targets) {
       await processFile(f.id);
     }
+    clearSelection();
+  }
+
+  async function moveSelected() {
+    const targets = selectedFiles.filter(f => f.status === 'parsed' || f.status === 'submitted');
+    if (targets.length === 0) {
+      setError('No selected files are in a movable state (must be parsed or submitted).');
+      return;
+    }
+    if (!confirm(`Move ${targets.length} selected file(s) to /Processed/?`)) return;
+    setError(null);
+    for (const f of targets) {
+      await moveFile(f.id);
+    }
+    clearSelection();
   }
 
   const statusBadge = (s: SharePointFile['status']) => {
@@ -215,12 +301,27 @@ function SharePointContent() {
                 )}
               </button>
               <button
-                onClick={processAllPending}
-                disabled={syncing || counts.pending === 0}
+                onClick={parseSelected}
+                disabled={syncing || selected.size === 0}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                Parse Selected ({selected.size})
+              </button>
+              <button
+                onClick={moveSelected}
+                disabled={syncing || selected.size === 0}
                 className="inline-flex items-center gap-2 px-3 py-2 text-sm text-slate-700 bg-slate-100 rounded-md hover:bg-slate-200 disabled:opacity-50 transition-colors"
               >
-                Parse All Pending ({counts.pending})
+                Move Selected
               </button>
+              {selected.size > 0 && (
+                <button
+                  onClick={clearSelection}
+                  className="text-xs text-slate-500 hover:text-slate-700 underline"
+                >
+                  Clear ({selected.size})
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -232,6 +333,47 @@ function SharePointContent() {
                 className="px-3 py-1.5 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-60"
               />
             </div>
+          </div>
+
+          {/* Date filter */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-slate-500 font-medium">Modified:</span>
+            <div className="flex gap-1 bg-slate-100 p-0.5 rounded-md">
+              {([
+                { k: 'all', l: 'All' },
+                { k: 'today', l: 'Today' },
+                { k: '7d', l: 'Last 7 days' },
+                { k: '30d', l: 'Last 30 days' },
+                { k: 'custom', l: 'Custom' },
+              ] as { k: DateFilter; l: string }[]).map(d => (
+                <button
+                  key={d.k}
+                  onClick={() => setDateFilter(d.k)}
+                  className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+                    dateFilter === d.k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {d.l}
+                </button>
+              ))}
+            </div>
+            {dateFilter === 'custom' && (
+              <>
+                <input
+                  type="date"
+                  value={customFrom}
+                  onChange={e => setCustomFrom(e.target.value)}
+                  className="px-2 py-1 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="text-slate-400">→</span>
+                <input
+                  type="date"
+                  value={customTo}
+                  onChange={e => setCustomTo(e.target.value)}
+                  className="px-2 py-1 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </>
+            )}
           </div>
 
           {/* Stats pills */}
@@ -293,6 +435,16 @@ function SharePointContent() {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50">
                   <tr>
+                    <th className="px-3 py-2 w-8">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all visible"
+                        checked={allFilteredSelected}
+                        ref={el => { if (el) el.indeterminate = someFilteredSelected; }}
+                        onChange={toggleAllFiltered}
+                        className="cursor-pointer"
+                      />
+                    </th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Status</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">File</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-600">Folder</th>
@@ -305,8 +457,17 @@ function SharePointContent() {
                 <tbody>
                   {filtered.map(f => {
                     const busy = busyIds.has(f.id);
+                    const isSelected = selected.has(f.id);
                     return (
-                      <tr key={f.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <tr key={f.id} className={`border-t border-slate-100 ${isSelected ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}>
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelected(f.id)}
+                            className="cursor-pointer"
+                          />
+                        </td>
                         <td className="px-3 py-2">{statusBadge(f.status)}</td>
                         <td className="px-3 py-2 font-medium text-slate-900 max-w-[260px] truncate" title={f.name}>
                           {f.name}
