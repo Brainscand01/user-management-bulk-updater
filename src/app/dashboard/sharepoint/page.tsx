@@ -61,8 +61,10 @@ function SharePointContent() {
   const [info, setInfo] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // `silent` skips the loading spinner — used by the 2s poll to avoid
+  // flickering the whole table out and back in on every refresh.
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     const supabase = createClient();
     const { data } = await supabase
       .from('um_sharepoint_files')
@@ -70,7 +72,7 @@ function SharePointContent() {
       .order('discovered_at', { ascending: false })
       .limit(500);
     setFiles((data as SharePointFile[]) || []);
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -82,7 +84,7 @@ function SharePointContent() {
   useEffect(() => {
     const inFlight = busyIds.size > 0 || files.some(f => f.status === 'parsing');
     if (!inFlight) return;
-    const t = setInterval(load, 2000);
+    const t = setInterval(() => load(true), 2000);
     return () => clearInterval(t);
   }, [files, busyIds, load]);
 
@@ -201,7 +203,7 @@ function SharePointContent() {
     // to 'parsing' and the first progress step before the long-running fetch
     // resolves. Subsequent polling (every 2s) is driven by the busyIds-aware
     // effect above.
-    const earlyRefresh = setTimeout(() => { load(); }, 500);
+    const earlyRefresh = setTimeout(() => { load(true); }, 500);
 
     try {
       const res = await fetch(`/api/sharepoint/files/${id}/process`, {
