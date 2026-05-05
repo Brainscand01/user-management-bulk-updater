@@ -77,14 +77,14 @@ function SharePointContent() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Live progress polling: refresh every 2s while EITHER the DB shows a
-  // parsing row OR we have a local in-flight action (busyIds). The latter
-  // closes the chicken-and-egg gap: processFile awaits the full parse, so
-  // without busyIds the page wouldn't poll until the parse completed.
+  // Live progress polling: refresh every 10s while EITHER the DB shows a
+  // parsing row OR we have a local in-flight action (busyIds). 10s is
+  // plenty given each Claude per-sheet call is 10-20s — anything faster
+  // just hits the DB without surfacing new info.
   useEffect(() => {
     const inFlight = busyIds.size > 0 || files.some(f => f.status === 'parsing');
     if (!inFlight) return;
-    const t = setInterval(() => load(true), 2000);
+    const t = setInterval(() => load(true), 10_000);
     return () => clearInterval(t);
   }, [files, busyIds, load]);
 
